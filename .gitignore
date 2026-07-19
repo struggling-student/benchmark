@@ -1,0 +1,39 @@
+# Python environments and generated package files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# Local cluster configuration and credentials
+configs/cluster/*.env
+!configs/cluster/sapienza.example.env
+.env
+.env.*
+!.env.example
+
+# Model caches and downloaded weights must stay outside Git
+model-cache/
+models/
+huggingface-cache/
+*.safetensors
+*.bin
+
+# Benchmark products (retain only the empty-directory marker)
+results/*
+!results/.gitkeep
+
+# Slurm and local run logs
+slurm-*.out
+slurm-*.err
+*.log
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+
