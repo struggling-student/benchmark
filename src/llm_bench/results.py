@@ -16,7 +16,7 @@ from typing import Any
 from .config import ExperimentConfig
 from .metadata import utc_timestamp
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 
 # Every summary written by this package contains every field. New fields may be added in
 # later schema versions, while raw backend output remains the source of truth.
@@ -55,6 +55,7 @@ SUMMARY_FIELDS = (
     "seed",
     "input_length",
     "output_length",
+    "max_model_len",
     "generation_config",
     "temperature",
     "top_p",
@@ -140,6 +141,7 @@ COMPATIBILITY_FIELDS = (
     "benchmark_type",
     "input_length",
     "output_length",
+    "max_model_len",
     "generation_config",
     "temperature",
     "top_p",
@@ -333,6 +335,7 @@ def create_summary(
             "seed": config.seed,
             "input_length": config.input_length,
             "output_length": config.output_length,
+            "max_model_len": config.max_model_len,
             "generation_config": config.generation_config,
             "temperature": config.temperature,
             "top_p": config.top_p,

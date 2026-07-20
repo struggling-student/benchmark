@@ -33,6 +33,7 @@ def experiment(*, model_id: str = "model-a", repetitions: int = 1):
             "number_of_prompts": 8,
             "input_length": 128,
             "output_length": 32,
+            "max_model_len": 8192,
             "gpu_memory_utilization": 0.9,
             "repetitions": repetitions,
             "warmup_runs": 1,
@@ -94,6 +95,7 @@ def test_summary_serialization_keeps_schema_and_nulls(tmp_path: Path) -> None:
     assert loaded["model_id"] == "model-a"
     assert loaded["dtype"] == "bfloat16"
     assert loaded["model_precision"] == "bfloat16"
+    assert loaded["max_model_len"] == 8192
     assert loaded["warnings"] == ["Metrics are null until the run is finalized."]
 
 
@@ -283,6 +285,19 @@ def test_generation_control_difference_is_incompatible() -> None:
     assert compatibility["status"] == "incompatible"
     assert compatibility["mismatched_fields"] == [
         {"field": "temperature", "left": 0.0, "right": 0.5}
+    ]
+
+
+def test_max_model_len_difference_is_incompatible() -> None:
+    left = completed_summary(model_id="model-a", run_id="left", throughput=2.0)
+    right = completed_summary(model_id="model-b", run_id="right", throughput=3.0)
+    right["max_model_len"] = 16384
+
+    compatibility = check_compatibility(left, right)
+
+    assert compatibility["status"] == "incompatible"
+    assert compatibility["mismatched_fields"] == [
+        {"field": "max_model_len", "left": 8192, "right": 16384}
     ]
 
 
