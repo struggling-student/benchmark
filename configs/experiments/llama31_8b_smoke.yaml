@@ -12,6 +12,7 @@ seed: 42
 number_of_prompts: 2
 input_length: 32
 output_length: 16
+max_model_len: 8192
 request_rate: null
 maximum_concurrency: null
 gpu_memory_utilization: 0.9

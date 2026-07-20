@@ -35,6 +35,7 @@ class ExperimentConfig:
     number_of_prompts: int = 1
     input_length: int = 128
     output_length: int = 32
+    max_model_len: int | None = None
     generation_config: str | None = None
     temperature: float | None = None
     top_p: float | None = None
@@ -135,6 +136,14 @@ def _validate(config: ExperimentConfig) -> None:
             raise ConfigurationError("request_rate must be null or a positive finite number")
     if config.maximum_concurrency is not None:
         _require_integer("maximum_concurrency", config.maximum_concurrency, minimum=1)
+    if config.max_model_len is not None:
+        _require_integer("max_model_len", config.max_model_len, minimum=1)
+        minimum_workload_length = config.input_length + config.output_length
+        if config.max_model_len < minimum_workload_length:
+            raise ConfigurationError(
+                "max_model_len must be at least input_length + output_length "
+                f"({minimum_workload_length})"
+            )
     if config.gpu_memory_utilization is not None:
         value = config.gpu_memory_utilization
         if isinstance(value, bool) or not isinstance(value, (int, float)):

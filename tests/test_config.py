@@ -17,6 +17,7 @@ def valid_mapping(**overrides: object) -> dict[str, object]:
         "number_of_prompts": 16,
         "input_length": 128,
         "output_length": 32,
+        "max_model_len": 8192,
         "generation_config": "vllm",
         "temperature": 0.0,
         "top_p": 1.0,
@@ -72,6 +73,7 @@ def test_rejects_missing_required_field() -> None:
     [
         ("number_of_prompts", 0),
         ("input_length", -1),
+        ("max_model_len", 0),
         ("repetitions", True),
         ("warmup_runs", -1),
         ("gpu_memory_utilization", 1.1),
@@ -88,6 +90,11 @@ def test_rejects_invalid_ranges(field: str, value: object) -> None:
 def test_serving_requires_rate_and_concurrency() -> None:
     with pytest.raises(ConfigurationError, match=r"serving experiments require.*request_rate"):
         config_from_mapping(valid_mapping(request_rate=None))
+
+
+def test_rejects_max_model_len_smaller_than_workload() -> None:
+    with pytest.raises(ConfigurationError, match=r"input_length \+ output_length"):
+        config_from_mapping(valid_mapping(max_model_len=159))
 
 
 def test_serving_requires_explicit_backend_generation_defaults() -> None:

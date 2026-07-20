@@ -12,6 +12,7 @@ seed: 42
 number_of_prompts: 128
 input_length: 256
 output_length: 64
+max_model_len: 8192
 generation_config: vllm
 temperature: 0.0
 top_p: 1.0
