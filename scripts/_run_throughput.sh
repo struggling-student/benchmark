@@ -65,7 +65,9 @@ if [[ "${LLM_BENCH_PREFLIGHT_DONE:-0}" != "1" ]] && \
 fi
 
 HELP_FILE="${RESULT_DIR}/vllm_bench_throughput_help.txt"
-if ! vllm bench throughput --help=all > "${HELP_FILE}" 2>&1; then
+if vllm bench throughput --help=all > "${HELP_FILE}" 2>&1; then
+    :
+elif ! vllm bench throughput --help > "${HELP_FILE}" 2>&1; then
     warn "Installed vLLM has no usable 'bench throughput' command; see ${HELP_FILE}."
     python -m llm_bench.cli normalize-results \
         --config "${EXPERIMENT}" --run-dir "${RESULT_DIR}" \
@@ -108,6 +110,7 @@ SEED="$(config_value "${EXPERIMENT}" seed)"
 NUMBER_OF_PROMPTS="$(config_value "${EXPERIMENT}" number_of_prompts)"
 INPUT_LENGTH="$(config_value "${EXPERIMENT}" input_length)"
 OUTPUT_LENGTH="$(config_value "${EXPERIMENT}" output_length)"
+MAX_MODEL_LEN="$(config_value "${EXPERIMENT}" max_model_len)"
 GPU_MEMORY_UTILIZATION="$(config_value "${EXPERIMENT}" gpu_memory_utilization)"
 REPETITIONS="$(config_value "${EXPERIMENT}" repetitions)"
 WARMUP_RUNS="$(config_value "${EXPERIMENT}" warmup_runs)"
@@ -139,6 +142,10 @@ build_command() {
     if ! is_null_value "${GPU_MEMORY_UTILIZATION}"; then
         require_help_flag "${HELP_FILE}" --gpu-memory-utilization || return 1
         CMD+=(--gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}")
+    fi
+    if ! is_null_value "${MAX_MODEL_LEN}"; then
+        require_help_flag "${HELP_FILE}" --max-model-len || return 1
+        CMD+=(--max-model-len "${MAX_MODEL_LEN}")
     fi
 }
 

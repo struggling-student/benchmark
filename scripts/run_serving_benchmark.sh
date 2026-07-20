@@ -113,6 +113,7 @@ SEED="$(config_value "${EXPERIMENT}" seed)"
 NUMBER_OF_PROMPTS="$(config_value "${EXPERIMENT}" number_of_prompts)"
 INPUT_LENGTH="$(config_value "${EXPERIMENT}" input_length)"
 OUTPUT_LENGTH="$(config_value "${EXPERIMENT}" output_length)"
+MAX_MODEL_LEN="$(config_value "${EXPERIMENT}" max_model_len)"
 GENERATION_CONFIG="$(config_value "${EXPERIMENT}" generation_config)"
 TEMPERATURE="$(config_value "${EXPERIMENT}" temperature)"
 TOP_P="$(config_value "${EXPERIMENT}" top_p)"
@@ -151,6 +152,11 @@ if ! is_null_value "${GPU_MEMORY_UTILIZATION}"; then
     require_help_flag "${SERVER_HELP}" --gpu-memory-utilization || \
         fail_before_server "Installed vLLM cannot apply configured gpu_memory_utilization."
     SERVER_CMD+=(--gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}")
+fi
+if ! is_null_value "${MAX_MODEL_LEN}"; then
+    require_help_flag "${SERVER_HELP}" --max-model-len || \
+        fail_before_server "Installed vLLM cannot apply configured max_model_len."
+    SERVER_CMD+=(--max-model-len "${MAX_MODEL_LEN}")
 fi
 if ! is_null_value "${TOKENIZER_ID}"; then
     require_help_flag "${SERVER_HELP}" --tokenizer || \
