@@ -65,7 +65,7 @@ if [[ "${LLM_BENCH_PREFLIGHT_DONE:-0}" != "1" ]] && \
 fi
 
 HELP_FILE="${RESULT_DIR}/vllm_bench_throughput_help.txt"
-if ! vllm bench throughput --help > "${HELP_FILE}" 2>&1; then
+if ! vllm bench throughput --help=all > "${HELP_FILE}" 2>&1; then
     warn "Installed vLLM has no usable 'bench throughput' command; see ${HELP_FILE}."
     python -m llm_bench.cli normalize-results \
         --config "${EXPERIMENT}" --run-dir "${RESULT_DIR}" \
