@@ -89,6 +89,8 @@ The shipped pairs request `dtype: float16` as an explicit common NVIDIA baseline
 
 Generation settings are part of the serving workload, not model-quality tuning in this benchmark. `generation_config: vllm` instructs the server not to import potentially different defaults from each model repository. The client explicitly passes `temperature: 0.0`, `top_p: 1.0`, and `ignore_eos: true` so token sampling and EOS stopping do not vary implicitly between the paired examples. These values reduce hidden workload differences; they do not make the models produce equivalent text or establish language quality. The launcher gates them against runtime CLI help and fails if the installed vLLM version cannot apply them.
 
+`max_model_len` is also an explicit workload/runtime control. It bounds the engine's KV-cache context allocation, must be at least `input_length + output_length`, is passed to both offline and serving engines, and is recorded as a comparison-critical summary field. The paired examples use the same value so a model's repository-level maximum context cannot silently change memory allocation or make one side of a comparison unrunnable on the selected GPU.
+
 Because the two targets ordinarily use their associated tokenizers, equal nominal token lengths do not guarantee identical source text or token content; preserve tokenizer identity and state what is controlled. A tokenizer difference must be reported, not hidden. Exact model revisions also matter.
 
 The comparison command checks, at minimum:
