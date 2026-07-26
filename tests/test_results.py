@@ -259,6 +259,71 @@ def test_hardware_difference_is_incompatible() -> None:
     ]
 
 
+def test_cpu_pairs_require_memory_and_placement_controls() -> None:
+    left = completed_summary(model_id="model-a", run_id="left", throughput=2.0)
+    right = completed_summary(model_id="model-b", run_id="right", throughput=3.0)
+    cpu_controls = {
+        "hardware_type": "cpu",
+        "accelerator_name": None,
+        "accelerator_count": 0,
+        "gpu_memory_utilization": None,
+        "cpu_model": "test-cpu",
+        "memory_type": "HBM2e",
+        "memory_mode": "flat",
+        "thread_count": 64,
+        "thread_affinity": "compact",
+        "process_count": 2,
+        "numa_policy": "local",
+        "memory_binding": "hbm",
+        "cpu_isa": "AVX-512",
+    }
+    left.update(cpu_controls)
+    right.update(cpu_controls)
+    for summary in (left, right):
+        summary["software_versions"]["cuda_runtime"] = None
+        summary["software_versions"]["nvidia_driver"] = None
+
+    assert check_compatibility(left, right)["status"] == "compatible"
+
+    right["memory_type"] = "DDR5"
+    compatibility = check_compatibility(left, right)
+    assert compatibility["status"] == "incompatible"
+    assert {"field": "memory_type", "left": "HBM2e", "right": "DDR5"} in compatibility[
+        "mismatched_fields"
+    ]
+
+
+def test_missing_cpu_placement_evidence_makes_comparison_partial() -> None:
+    left = completed_summary(model_id="model-a", run_id="left", throughput=2.0)
+    right = completed_summary(model_id="model-b", run_id="right", throughput=3.0)
+    for summary in (left, right):
+        summary.update(
+            {
+                "hardware_type": "cpu",
+                "accelerator_name": None,
+                "accelerator_count": 0,
+                "gpu_memory_utilization": None,
+                "memory_type": "HBM2e",
+                "memory_mode": "flat",
+                "thread_count": 64,
+                "thread_affinity": None,
+                "process_count": 2,
+                "numa_policy": "local",
+                "memory_binding": "hbm",
+                "cpu_isa": "AVX-512",
+            }
+        )
+        summary["software_versions"]["cuda_runtime"] = None
+        summary["software_versions"]["nvidia_driver"] = None
+
+    compatibility = check_compatibility(left, right)
+
+    assert compatibility["status"] == "partial"
+    assert {"field": "thread_affinity", "left": None, "right": None} in compatibility[
+        "missing_fields"
+    ]
+
+
 def test_incompatible_workload_reports_mismatch_and_omits_ratios() -> None:
     left = completed_summary(model_id="model-a", run_id="left", throughput=2.0)
     right = completed_summary(model_id="model-b", run_id="right", throughput=3.0)

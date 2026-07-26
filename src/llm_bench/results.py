@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 import math
 import re
@@ -173,6 +174,24 @@ COMPATIBILITY_FIELDS = (
     "software_versions.cuda_runtime",
     "software_versions.nvidia_driver",
 )
+
+# These controls are intentionally conditional.  Existing GPU summaries remain comparable
+# without CPU placement metadata, while CPU pairs must establish placement and memory-policy
+# evidence before they can be called a fair like-for-like comparison.
+CPU_COMPATIBILITY_FIELDS = (
+    "memory_type",
+    "memory_mode",
+    "thread_count",
+    "thread_affinity",
+    "process_count",
+    "numa_policy",
+    "memory_binding",
+    "cpu_isa",
+)
+
+# Optional workload dimensions participate as soon as either side records them.  This keeps
+# legacy summaries compatible while preventing a newly recorded control from being ignored.
+OPTIONAL_COMPATIBILITY_FIELDS = ("batch_size",)
 
 
 class ResultError(ValueError):
@@ -849,7 +868,15 @@ def check_compatibility(left: Mapping[str, Any], right: Mapping[str, Any]) -> di
 
     mismatches: list[dict[str, Any]] = []
     missing: list[dict[str, Any]] = []
-    for field in COMPATIBILITY_FIELDS:
+    fields = list(COMPATIBILITY_FIELDS)
+    if left.get("hardware_type") == "cpu" and right.get("hardware_type") == "cpu":
+        fields.extend(CPU_COMPATIBILITY_FIELDS)
+    fields.extend(
+        field
+        for field in OPTIONAL_COMPATIBILITY_FIELDS
+        if field in left or field in right
+    )
+    for field in fields:
         left_value = _get_dotted(left, field)
         right_value = _get_dotted(right, field)
         if left_value is _MISSING or right_value is _MISSING:
@@ -1020,54 +1047,61 @@ def write_comparison(
         raise ResultError(f"comparison is not valid JSON: {exc}") from exc
     json_path.write_text(json_text, encoding="utf-8")
 
+    csv_path.write_text(comparison_csv_text(comparison), encoding="utf-8")
+    return json_path, csv_path
+
+
+def comparison_csv_text(comparison: Mapping[str, Any]) -> str:
+    """Serialize the established long-form comparison CSV without writing a file."""
+
     left = comparison.get("left_run", {})
     right = comparison.get("right_run", {})
     compatibility = comparison.get("compatibility", {})
     metrics = comparison.get("metrics", {})
-    with csv_path.open("w", encoding="utf-8", newline="") as stream:
-        fieldnames = (
-            "metric",
-            "left_run_id",
-            "left_model_id",
-            "left_value",
-            "right_run_id",
-            "right_model_id",
-            "right_value",
-            "right_to_left_ratio",
-            "compatibility_status",
-            "mismatched_fields",
-            "missing_compatibility_fields",
-            "left_status",
-            "right_status",
-            "failed_runs",
+    stream = io.StringIO(newline="")
+    fieldnames = (
+        "metric",
+        "left_run_id",
+        "left_model_id",
+        "left_value",
+        "right_run_id",
+        "right_model_id",
+        "right_value",
+        "right_to_left_ratio",
+        "compatibility_status",
+        "mismatched_fields",
+        "missing_compatibility_fields",
+        "left_status",
+        "right_status",
+        "failed_runs",
+    )
+    writer = csv.DictWriter(stream, fieldnames=fieldnames)
+    writer.writeheader()
+    for metric in COMPARISON_METRICS:
+        values = metrics.get(metric, {})
+        writer.writerow(
+            {
+                "metric": metric,
+                "left_run_id": left.get("run_id"),
+                "left_model_id": left.get("model_id"),
+                "left_value": values.get("left"),
+                "right_run_id": right.get("run_id"),
+                "right_model_id": right.get("model_id"),
+                "right_value": values.get("right"),
+                "right_to_left_ratio": values.get("right_to_left_ratio"),
+                "compatibility_status": compatibility.get("status"),
+                "mismatched_fields": json.dumps(
+                    compatibility.get("mismatched_fields", []), sort_keys=True
+                ),
+                "missing_compatibility_fields": json.dumps(
+                    compatibility.get("missing_fields", []), sort_keys=True
+                ),
+                "left_status": left.get("status"),
+                "right_status": right.get("status"),
+                "failed_runs": json.dumps(compatibility.get("failed_runs", []), sort_keys=True),
+            }
         )
-        writer = csv.DictWriter(stream, fieldnames=fieldnames)
-        writer.writeheader()
-        for metric in COMPARISON_METRICS:
-            values = metrics.get(metric, {})
-            writer.writerow(
-                {
-                    "metric": metric,
-                    "left_run_id": left.get("run_id"),
-                    "left_model_id": left.get("model_id"),
-                    "left_value": values.get("left"),
-                    "right_run_id": right.get("run_id"),
-                    "right_model_id": right.get("model_id"),
-                    "right_value": values.get("right"),
-                    "right_to_left_ratio": values.get("right_to_left_ratio"),
-                    "compatibility_status": compatibility.get("status"),
-                    "mismatched_fields": json.dumps(
-                        compatibility.get("mismatched_fields", []), sort_keys=True
-                    ),
-                    "missing_compatibility_fields": json.dumps(
-                        compatibility.get("missing_fields", []), sort_keys=True
-                    ),
-                    "left_status": left.get("status"),
-                    "right_status": right.get("status"),
-                    "failed_runs": json.dumps(compatibility.get("failed_runs", []), sort_keys=True),
-                }
-            )
-    return json_path, csv_path
+    return stream.getvalue()
 
 
 def compare_paths(
