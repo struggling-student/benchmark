@@ -209,6 +209,7 @@ $RESULTS_ROOT/<date>/<run-id>/
 ├── experiment.yaml
 ├── metadata.json
 ├── summary.json
+├── measurements.json           # stable per-repetition normalized observations
 ├── raw_vllm_output.json
 ├── stdout.log
 ├── stderr.log
@@ -233,6 +234,12 @@ $RESULTS_ROOT/<date>/<run-id>/
 If `nvidia-smi` is absent, permission is denied, visibility is unscoped, or a device does not support a requested power or sensor field, telemetry fails gracefully. Optional files may be absent or contain a diagnostic; the summary uses a warning and `null` metrics, never a fabricated number. `raw_vllm_output.json` is retained because vLLM's output format can change; `summary.json` is the stable, hardware-neutral view.
 
 When `repetitions` is greater than one, every explicitly supplied measured raw/telemetry file participates in normalization. Performance, latency, duration, utilization, and average-power fields are arithmetic means across available measured repetitions; `peak_gpu_memory_mib` is their maximum. `successful_requests`, actual input tokens, and actual output tokens are totals, and `energy_joules` is summed across the measured telemetry windows; energy-per-request and energy-per-output-token use those totals. Warm-up files are kept under `warmup/` but excluded. Missing, unreadable, or failed repetitions are retained, counted in `failed_repetitions`, warned about, and cause the run status to be `failed` rather than being silently dropped.
+
+`measurements.json` keeps the corresponding normalized observation for every configured repetition,
+including an explicit `unavailable` record when no readable measured raw output exists. Its file
+references are relative to the run directory so copied result directories remain portable. The
+aggregate `summary.json` remains authoritative for comparisons; repetition observations supply
+spread and telemetry detail rather than changing aggregate semantics.
 
 Useful checks are:
 

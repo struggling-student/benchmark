@@ -135,4 +135,72 @@ A valid pair uses equivalent input lengths, requested output lengths, counts, co
 
 `comparison.json` contains run/model identities, compatibility, mismatches, absolute values, valid model-to-model ratios, missing-metric warnings, and failed-run information. `comparison.csv` is a small tabular view of the same comparison. A ratio needs an explicit direction (for example, 8B value divided by 1B value); a larger ratio is not universally better because lower latency/energy and higher throughput have opposite desirability.
 
+## Interactive visualization and comparison
+
+Install and launch the optional Streamlit dashboard separately from benchmark execution:
+
+```bash
+pip install -e ".[dashboard]"
+llm-bench dashboard --results-root "$RESULTS_ROOT"
+```
+
+The dashboard treats the filesystem as the source of truth and never modifies a run directory.
+It recursively catalogs supported summaries and provides filters for platform, memory system,
+model, benchmark type, status, precision, evidence source, and workload. Malformed results and
+duplicate run IDs appear as diagnostics; filesystem paths remain the unique identities.
+
+The **Data source** control can show measured results, a deterministic simulated study, or both.
+If the measured catalog is empty, the simulated study is selected initially so the complete UI can
+be evaluated before CPU-HBM hardware is available. Simulated summaries, five-repetition records,
+and GPU/CPU telemetry stay in memory: they do not create result files and are excluded from the
+measured catalog CSV.
+
+Use the five views as follows:
+
+- **Overview** audits campaign health, plots the throughput/latency trade-off, shows platform and
+  benchmark coverage, makes metric availability explicit, and exports measured catalog rows.
+- **Run detail** shows benchmark-aware headline metrics, the complete metric ledger, workload and
+  hardware-placement controls, warnings, repetition observations, and optional resource telemetry.
+  Multi-GPU utilization is averaged while GPU memory and power are summed at each timestamp. CPU
+  utilization, resident memory, package power, and memory bandwidth appear only when applicable
+  instrumentation is recorded.
+- **Explorer** offers a single-metric workload slice and a two-metric trade-off. Every mark remains
+  an individual run; differently configured observations are not silently aggregated.
+- **CPU memory study** pairs CPU DDR and HBM runs only when the recorded model, CPU, backend,
+  workload, precision, threading, NUMA policy, and instrumentation controls match. It visualizes
+  bandwidth, prefill/decode behavior, placement, and direction-aware HBM effects.
+- **Compare** requires two explicitly selected runs. The formal lens uses the established
+  compatibility gate; the CPU memory-treatment lens declares memory as the intended difference
+  while enforcing the other CPU controls; the descriptive lens suppresses all ratios. Visible
+  metrics, including preview CPU fields, can be downloaded as JSON or CSV.
+
+For mean-aggregated metrics, repetition error bars show one sample standard deviation when at least
+two observations exist. They are not confidence intervals and do not establish statistical
+significance. Peak memory remains a maximum, energy remains a sum, and per-unit energy remains a
+weighted aggregate, so those metrics do not receive mean-style error bars. Smoke tests are labelled
+as functional validation rather than formal performance campaigns.
+
+The simulated CPU fields are a presentation contract for dashboard development, not an implemented
+CPU benchmark writer. Persisting CPU results still requires the schema/backend work described in
+the roadmap. The dashboard currently recognizes optional memory type/mode/capacity, batch size,
+thread/process placement, NUMA and memory binding, instrumentation boundary, CPU utilization and
+memory, package power, achieved bandwidth, and prefill/decode throughput fields without forcing
+them into legacy GPU summaries.
+
+Prefer copying a result root to a workstation and running the dashboard there. Absolute paths in
+older summaries are recovered by looking for the same filename inside the copied run directory;
+new `measurements.json` references are relative. If site policy permits running a dashboard on a
+cluster login node, bind it only to the loopback interface and forward the port:
+
+```bash
+# Workstation terminal
+ssh -L 8501:127.0.0.1:8501 USER@LOGIN_HOST
+
+# Login-host shell, after activating the benchmark environment
+llm-bench dashboard --results-root "$RESULTS_ROOT" --host 127.0.0.1 --port 8501
+```
+
+Then open `http://127.0.0.1:8501` locally. Do not run a persistent service on a login node when
+cluster policy prohibits it.
+
 Continue with [05 — CPU-HBM roadmap](05_CPU_HBM_ROADMAP.md).

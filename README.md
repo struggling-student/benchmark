@@ -78,6 +78,33 @@ python scripts/compare_model_results.py \
 
 The comparison writes `comparison.json` and `comparison.csv`. It reports configuration mismatches and will not present incompatible runs as a fair comparison. The shipped pairs explicitly request `float16` as a common NVIDIA baseline; confirm support on the allocated GPU, or change both sides together. Serving benchmarks use the two corresponding `*_serving.yaml` files in exactly the same way. Those paired configurations explicitly disable model-repository generation defaults and fix sampling/EOS controls so the two models receive the same requested decode workload; the launcher fails rather than silently dropping a control that the installed vLLM CLI does not support.
 
+## Interactive results dashboard
+
+Install the optional visualization dependencies and point the read-only dashboard at any local
+or copied results root:
+
+```bash
+pip install -e ".[dashboard]"
+llm-bench dashboard --results-root "$RESULTS_ROOT"
+```
+
+The dashboard discovers every supported `summary.json` recursively and now presents campaign
+health, performance trade-offs, metric completeness, run/repetition detail, hardware-aware
+resource telemetry, free-form exploration, and explicit two-run comparison. A dedicated CPU memory
+study view is ready for controlled DDR-versus-HBM pairs and keeps placement evidence visible.
+
+When a results root is empty, the dashboard opens a deterministic in-memory preview containing GPU,
+CPU-DDR, and CPU-HBM runs. Preview values are prominently labelled simulated, never written to the
+results root, and excluded from the measured catalog export. Choose **Measured results** in the
+sidebar to show only filesystem evidence. The dashboard never assigns an overall score or evaluates
+model-answer quality.
+
+New runs also contain `measurements.json`, a stable normalized record of each configured measured
+repetition. Older result directories remain usable: the dashboard derives repetition values in
+memory from preserved raw and telemetry files and labels that fallback. See
+[Metrics and results](docs/04_METRICS_AND_RESULTS.md#interactive-visualization-and-comparison) for
+local and cluster access guidance.
+
 ## Guides
 
 1. [Inspect the cluster from step zero](docs/01_CLUSTER_PREREQUISITES.md)

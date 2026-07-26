@@ -52,6 +52,20 @@ Placement is part of the experiment, not incidental metadata. On a multi-socket 
 
 Prefill and decode should be analyzed separately where the backend exposes enough information. Prefill can exploit broad token-level parallelism; autoregressive decode may be especially sensitive to repeated model-weight reads, KV-cache traffic, and achievable memory bandwidth. Prompt length and batch/concurrency must therefore be swept deliberately rather than collapsed into one “CPU performance” number.
 
+### Dashboard preview before CPU implementation
+
+The dashboard includes a deterministic, in-memory CPU-DDR/HBM study so the presentation and
+experimental controls can be reviewed before a CPU backend or HBM machine is available. It
+exercises memory type and mode, batch size, thread/process placement, NUMA and memory binding,
+instrumentation scope, CPU utilization and memory, package power, measured bandwidth, and separate
+prefill/decode throughput. Every preview run is visibly marked simulated, is never written under
+the results root, and must not be cited as benchmark evidence.
+
+The CPU memory-study view treats DDR versus HBM as an explicit treatment comparison: model, CPU,
+backend, workload, precision, placement, and instrumentation must match before ratios are shown.
+The ordinary comparison lens continues to treat memory-system differences as incompatibilities.
+This presentation contract does not replace the future result-schema and backend implementation.
+
 ## Reusing the schema across hardware
 
 GPU, CPU-DDR, and CPU-HBM runs should use the same top-level experiment and result schema:
