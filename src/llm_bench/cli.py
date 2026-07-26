@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import shutil
+import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from .config import BENCHMARK_TYPES, ConfigurationError, load_experiment
+from .measurements import create_measurements, write_measurements
 from .metadata import collect_metadata, write_metadata
 from .results import (
     ResultError,
@@ -97,6 +100,13 @@ def _normalize_results(args: argparse.Namespace) -> int:
         warnings=args.warning,
         error=args.error,
     )
+    measurements = create_measurements(
+        normalized,
+        run_directory=run_directory,
+        raw_output_paths=args.raw_output,
+        telemetry_paths=args.telemetry,
+    )
+    write_measurements(run_directory / "measurements.json", measurements)
     write_summary(summary_path, normalized)
     print(summary_path)
     return 0
@@ -108,6 +118,37 @@ def _compare(args: argparse.Namespace) -> int:
     print(json_path)
     print(csv_path)
     return 0
+
+
+def _dashboard(args: argparse.Namespace) -> int:
+    if importlib.util.find_spec("streamlit") is None:
+        raise ResultError(
+            "dashboard dependencies are unavailable; install them with "
+            'pip install -e ".[dashboard]"'
+        )
+    dashboard_path = Path(__file__).with_name("dashboard.py")
+    command = [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        str(dashboard_path),
+        "--server.address",
+        args.host,
+        "--server.port",
+        str(args.port),
+        "--server.headless",
+        "true",
+        "--browser.gatherUsageStats",
+        "false",
+        "--",
+        "--results-root",
+        str(args.results_root.expanduser().resolve()),
+    ]
+    try:
+        return subprocess.call(command)
+    except KeyboardInterrupt:
+        return 130
 
 
 def _add_type_argument(parser: argparse.ArgumentParser) -> None:
@@ -188,6 +229,14 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("right", type=Path)
     compare.add_argument("--output-dir", type=Path, required=True)
     compare.set_defaults(handler=_compare)
+
+    dashboard = subparsers.add_parser(
+        "dashboard", help="launch the optional interactive results dashboard"
+    )
+    dashboard.add_argument("--results-root", type=Path, required=True)
+    dashboard.add_argument("--host", default="127.0.0.1")
+    dashboard.add_argument("--port", type=int, default=8501)
+    dashboard.set_defaults(handler=_dashboard)
     return parser
 
 
