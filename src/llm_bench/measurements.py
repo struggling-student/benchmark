@@ -92,7 +92,15 @@ def create_measurements(
         raw_metrics: dict[str, Any] = {}
         if raw_path is not None:
             try:
-                raw_metrics = read_raw_metrics(raw_path)
+                raw_metrics = read_raw_metrics(
+                    raw_path,
+                    backend=str(summary.get("backend") or "") or None,
+                    measurement_method=(
+                        str(summary["measurement_method"])
+                        if summary.get("measurement_method")
+                        else None
+                    ),
+                )
                 values.update({key: value for key, value in raw_metrics.items() if key in values})
                 status = "completed"
             except ResultError as exc:
