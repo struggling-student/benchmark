@@ -12,12 +12,12 @@ from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import fmean
-from typing import Any
+from typing import Any, Protocol
 
 from .config import ExperimentConfig
 from .metadata import utc_timestamp
 
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "2.0"
 
 # Every summary written by this package contains every field. New fields may be added in
 # later schema versions, while raw backend output remains the source of truth.
@@ -28,16 +28,33 @@ SUMMARY_FIELDS = (
     "status",
     "error",
     "experiment_name",
+    "model_key",
+    "workload_key",
     "benchmark_type",
     "backend",
     "backend_version",
+    "backend_profile",
+    "execution_provider",
+    "container_image",
+    "container_image_digest",
+    "container_id",
+    "native_binary_version",
+    "measurement_method",
+    "measurement_scope",
+    "workload_manifest_sha256",
     "model_id",
     "model_revision",
+    "model_revision_policy",
     "resolved_model_revision",
     "tokenizer_id",
     "resolved_tokenizer_revision",
     "model_parameter_scale",
     "model_precision",
+    "model_artifact_format",
+    "model_artifact_variant",
+    "model_artifact_path",
+    "model_artifact_sha256",
+    "model_artifact_source_revision",
     "git_commit",
     "git_dirty",
     "slurm_job_id",
@@ -49,6 +66,21 @@ SUMMARY_FIELDS = (
     "cpu_model",
     "socket_count",
     "numa_node_count",
+    "thread_count",
+    "thread_count_batch",
+    "cpu_mask",
+    "numa_policy",
+    "memory_binding",
+    "memory_type",
+    "memory_mode",
+    "memory_capacity_gib",
+    "thread_affinity",
+    "process_count",
+    "cpu_isa",
+    "gpu_layers",
+    "batch_size",
+    "ubatch_size",
+    "parallel_slots",
     "software_versions",
     "dtype",
     "quantization",
@@ -70,6 +102,7 @@ SUMMARY_FIELDS = (
     "maximum_concurrency",
     "gpu_memory_utilization",
     "warmup_runs",
+    "backend_internal_warmup",
     "repetitions",
     "telemetry_interval_ms",
     "measured_repetitions",
@@ -80,6 +113,8 @@ SUMMARY_FIELDS = (
     "input_throughput_tokens_per_second",
     "output_throughput_tokens_per_second",
     "total_throughput_tokens_per_second",
+    "prefill_throughput_tokens_per_second",
+    "decode_throughput_tokens_per_second",
     "mean_ttft_ms",
     "median_ttft_ms",
     "p95_ttft_ms",
@@ -96,12 +131,25 @@ SUMMARY_FIELDS = (
     "p95_e2e_latency_ms",
     "peak_gpu_memory_mib",
     "average_gpu_utilization_percent",
+    "peak_cpu_memory_mib",
+    "average_cpu_utilization_percent",
+    "measured_memory_bandwidth_gbps",
+    "memory_bandwidth_utilization_percent",
     "average_gpu_power_watts",
+    "average_cpu_power_watts",
     "energy_joules",
     "energy_per_request_joules",
     "energy_per_output_token_joules",
     "raw_output_files",
     "telemetry_files",
+    "telemetry_scope",
+    "energy_scope",
+    "instrumentation_boundary",
+    "memory_bandwidth_instrument",
+    "memory_bandwidth_scope",
+    "power_instrument",
+    "power_scope",
+    "configuration_hashes",
     "warnings",
 )
 
@@ -112,6 +160,8 @@ NUMERIC_METRICS = (
     "input_throughput_tokens_per_second",
     "output_throughput_tokens_per_second",
     "total_throughput_tokens_per_second",
+    "prefill_throughput_tokens_per_second",
+    "decode_throughput_tokens_per_second",
     "mean_ttft_ms",
     "median_ttft_ms",
     "p95_ttft_ms",
@@ -128,7 +178,12 @@ NUMERIC_METRICS = (
     "p95_e2e_latency_ms",
     "peak_gpu_memory_mib",
     "average_gpu_utilization_percent",
+    "peak_cpu_memory_mib",
+    "average_cpu_utilization_percent",
+    "measured_memory_bandwidth_gbps",
+    "memory_bandwidth_utilization_percent",
     "average_gpu_power_watts",
+    "average_cpu_power_watts",
     "energy_joules",
     "energy_per_request_joules",
     "energy_per_output_token_joules",
@@ -191,7 +246,18 @@ CPU_COMPATIBILITY_FIELDS = (
 
 # Optional workload dimensions participate as soon as either side records them.  This keeps
 # legacy summaries compatible while preventing a newly recorded control from being ignored.
-OPTIONAL_COMPATIBILITY_FIELDS = ("batch_size",)
+OPTIONAL_COMPATIBILITY_FIELDS = (
+    "batch_size",
+    "execution_provider",
+    "measurement_method",
+    "measurement_scope",
+    "backend_internal_warmup",
+    "workload_manifest_sha256",
+    "model_artifact_variant",
+    "model_artifact_sha256",
+    "telemetry_scope",
+    "energy_scope",
+)
 
 
 class ResultError(ValueError):
@@ -250,6 +316,16 @@ _ALIASES: dict[str, tuple[str, ...]] = {
         "tokens_per_second",
         "token_throughput",
     ),
+    "prefill_throughput_tokens_per_second": (
+        "prefill_throughput_tokens_per_second",
+        "prompt_tokens_per_second",
+        "prompt_per_second",
+    ),
+    "decode_throughput_tokens_per_second": (
+        "decode_throughput_tokens_per_second",
+        "predicted_tokens_per_second",
+        "predicted_per_second",
+    ),
     "mean_ttft_ms": ("mean_ttft_ms", "avg_ttft_ms"),
     "median_ttft_ms": ("median_ttft_ms", "med_ttft_ms"),
     "p95_ttft_ms": ("p95_ttft_ms",),
@@ -277,6 +353,22 @@ _ALIASES: dict[str, tuple[str, ...]] = {
         "average_gpu_power_watts",
         "avg_gpu_power_watts",
     ),
+    "peak_cpu_memory_mib": ("peak_cpu_memory_mib", "max_cpu_memory_mib"),
+    "average_cpu_utilization_percent": (
+        "average_cpu_utilization_percent",
+        "avg_cpu_utilization_percent",
+    ),
+    "measured_memory_bandwidth_gbps": (
+        "measured_memory_bandwidth_gbps",
+        "memory_bandwidth_gbps",
+    ),
+    "memory_bandwidth_utilization_percent": (
+        "memory_bandwidth_utilization_percent",
+    ),
+    "average_cpu_power_watts": (
+        "average_cpu_power_watts",
+        "avg_cpu_power_watts",
+    ),
     "energy_joules": ("energy_joules",),
     "energy_per_request_joules": ("energy_per_request_joules",),
     "energy_per_output_token_joules": ("energy_per_output_token_joules",),
@@ -289,6 +381,7 @@ def _empty_summary() -> dict[str, Any]:
         {
             "schema_version": SCHEMA_VERSION,
             "software_versions": {},
+            "configuration_hashes": {},
             "raw_output_files": [],
             "telemetry_files": [],
             "warnings": [],
@@ -311,11 +404,23 @@ def create_summary(
         "run_id",
         "timestamp",
         "experiment_name",
+        "model_key",
+        "workload_key",
         "benchmark_type",
         "backend",
         "backend_version",
+        "backend_profile",
+        "execution_provider",
+        "container_image",
+        "container_image_digest",
+        "container_id",
+        "native_binary_version",
+        "measurement_method",
+        "measurement_scope",
+        "workload_manifest_sha256",
         "model_id",
         "model_revision",
+        "model_revision_policy",
         "resolved_model_revision",
         "tokenizer_id",
         "resolved_tokenizer_revision",
@@ -331,6 +436,20 @@ def create_summary(
         "cpu_model",
         "socket_count",
         "numa_node_count",
+        "memory_type",
+        "memory_mode",
+        "memory_capacity_gib",
+        "thread_affinity",
+        "process_count",
+        "cpu_isa",
+        "telemetry_scope",
+        "energy_scope",
+        "instrumentation_boundary",
+        "memory_bandwidth_instrument",
+        "memory_bandwidth_scope",
+        "power_instrument",
+        "power_scope",
+        "configuration_hashes",
         "software_versions",
     ):
         if field in metadata:
@@ -339,8 +458,12 @@ def create_summary(
         {
             "status": status,
             "experiment_name": config.experiment_name,
+            "model_key": config.model_key,
+            "workload_key": config.workload_key,
             "benchmark_type": metadata.get("benchmark_type", config.resolved_benchmark_type),
             "backend": config.backend,
+            "backend_profile": config.profile_name,
+            "execution_provider": config.provider,
             "model_id": config.model_id,
             "model_revision": config.model_revision,
             "tokenizer_id": config.tokenizer,
@@ -348,6 +471,9 @@ def create_summary(
             # An explicit vLLM dtype controls model weights and activations. ``auto``
             # is only a policy and remains unknown unless raw backend output resolves it.
             "model_precision": None if config.dtype == "auto" else config.dtype,
+            "model_artifact_format": config.artifact_format,
+            "model_artifact_variant": config.artifact_variant,
+            "model_artifact_path": config.artifact_path,
             "dtype": config.dtype,
             "quantization": config.quantization,
             "tensor_parallel_size": config.tensor_parallel_size,
@@ -363,7 +489,17 @@ def create_summary(
             "request_rate": config.request_rate,
             "maximum_concurrency": config.maximum_concurrency,
             "gpu_memory_utilization": config.gpu_memory_utilization,
+            "thread_count": config.thread_count,
+            "thread_count_batch": config.thread_count_batch,
+            "cpu_mask": config.cpu_mask,
+            "numa_policy": config.numa_policy,
+            "memory_binding": config.memory_binding,
+            "gpu_layers": config.gpu_layers,
+            "batch_size": config.batch_size,
+            "ubatch_size": config.ubatch_size,
+            "parallel_slots": config.parallel_slots,
             "warmup_runs": config.warmup_runs,
+            "backend_internal_warmup": None,
             "repetitions": config.repetitions,
             "telemetry_interval_ms": config.telemetry_interval_ms,
             "measured_repetitions": 0,
@@ -487,16 +623,99 @@ def _metrics_from_raw(data: Any) -> dict[str, Any]:
     return metrics
 
 
-def read_raw_metrics(path: str | Path) -> dict[str, Any]:
-    """Extract known metrics from one preserved vLLM JSON output file."""
+def _llamacpp_bench_metrics(data: Any) -> dict[str, Any]:
+    rows = data if isinstance(data, list) else [data]
+    combined = [
+        row
+        for row in rows
+        if isinstance(row, Mapping)
+        and (_finite_float(row.get("n_prompt")) or 0) > 0
+        and (_finite_float(row.get("n_gen")) or 0) > 0
+    ]
+    if not combined:
+        return _metrics_from_raw(data)
+    row = combined[0]
+    prompt = _finite_float(row.get("n_prompt")) or 0
+    generated = _finite_float(row.get("n_gen")) or 0
+    samples_ns = [
+        value
+        for item in row.get("samples_ns", [])
+        if (value := _finite_float(item)) is not None
+    ]
+    repetitions = len(samples_ns) or 1
+    duration = sum(samples_ns) / 1_000_000_000 if samples_ns else None
+    metrics: dict[str, Any] = {
+        "successful_requests": repetitions,
+        "failed_requests": 0,
+        "actual_input_tokens": prompt * repetitions,
+        "actual_output_tokens": generated * repetitions,
+    }
+    if duration is not None and duration > 0:
+        metrics.update(
+            {
+                "duration_seconds": duration,
+                "request_throughput_requests_per_second": repetitions / duration,
+                "input_throughput_tokens_per_second": prompt * repetitions / duration,
+                "output_throughput_tokens_per_second": generated * repetitions / duration,
+                "total_throughput_tokens_per_second": (prompt + generated)
+                * repetitions
+                / duration,
+            }
+        )
+    else:
+        average = _finite_float(row.get("avg_ts"))
+        if average is not None:
+            metrics["total_throughput_tokens_per_second"] = average
+        average_ns = _finite_float(row.get("avg_ns"))
+        if average_ns is not None:
+            metrics["duration_seconds"] = average_ns / 1_000_000_000
+    return metrics
+
+
+class MetricParser(Protocol):
+    """Typed raw-result parser contract used by the internal parser registry."""
+
+    def __call__(self, data: Any) -> dict[str, Any]: ...
+
+
+METRIC_PARSER_REGISTRY: dict[tuple[str, str], MetricParser] = {
+    ("llamacpp", "llamacpp_bench"): _llamacpp_bench_metrics,
+    ("llamacpp", "backend_native"): _llamacpp_bench_metrics,
+    ("vllm", "vllm_bench_throughput"): _metrics_from_raw,
+    ("vllm", "backend_native"): _metrics_from_raw,
+    ("vllm", "shared_openai_streaming"): _metrics_from_raw,
+    ("llamacpp", "shared_openai_streaming"): _metrics_from_raw,
+}
+
+
+def read_raw_metrics(
+    path: str | Path,
+    *,
+    backend: str | None = None,
+    measurement_method: str | None = None,
+) -> dict[str, Any]:
+    """Extract metrics from shared-harness or backend-native JSON."""
 
     source = Path(path)
     try:
         data = json.loads(source.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ResultError(f"cannot parse raw vLLM JSON {source}: {exc}") from exc
+        raise ResultError(f"cannot parse raw benchmark JSON {source}: {exc}") from exc
     if not isinstance(data, (dict, list)):
-        raise ResultError(f"raw vLLM output must be a JSON object or array: {source}")
+        raise ResultError(f"raw benchmark output must be a JSON object or array: {source}")
+    method = measurement_method
+    if isinstance(data, Mapping) and isinstance(data.get("measurement_method"), str):
+        method = str(data["measurement_method"])
+    if backend and method:
+        parser = METRIC_PARSER_REGISTRY.get((backend, method))
+        if parser is None:
+            raise ResultError(
+                f"no raw metric parser registered for backend={backend!r}, "
+                f"measurement_method={method!r}"
+            )
+        return parser(data)
+    if backend == "llamacpp":
+        return _llamacpp_bench_metrics(data)
     return _metrics_from_raw(data)
 
 
@@ -565,6 +784,22 @@ def read_telemetry_metrics(
             ),
             "memory": _row_value(row, ("memory.used [MiB]", "memory_used_mib", "memory_used")),
             "power": _row_value(row, ("power.draw [W]", "power_draw_watts", "power_draw")),
+            "cpu_utilization": _row_value(
+                row,
+                ("cpu.utilization [%]", "cpu_utilization_percent", "cpu_usage_percent"),
+            ),
+            "cpu_memory": _row_value(
+                row,
+                ("rss_mib", "resident_memory_mib", "cpu_memory_used_mib"),
+            ),
+            "cpu_power": _row_value(
+                row,
+                ("package_power_watts", "cpu_package_power_watts", "total_cpu_power_watts"),
+            ),
+            "memory_bandwidth": _row_value(
+                row,
+                ("memory_bandwidth_gbps", "memory_bandwidth_gb_s", "bandwidth_gbps"),
+            ),
         }
         for name, text in values.items():
             parsed = _finite_float(text)
@@ -574,6 +809,10 @@ def read_telemetry_metrics(
     utilization_by_time: list[float] = []
     memory_by_time: list[float] = []
     power_by_time: list[tuple[float, float]] = []
+    cpu_utilization_by_time: list[float] = []
+    cpu_memory_by_time: list[float] = []
+    cpu_power_by_time: list[tuple[float, float]] = []
+    memory_bandwidth_by_time: list[float] = []
     for timestamp in sorted(samples):
         sample = samples[timestamp]
         if sample["utilization"]:
@@ -582,12 +821,27 @@ def read_telemetry_metrics(
             memory_by_time.append(sum(sample["memory"]))
         if sample["power"]:
             power_by_time.append((timestamp, sum(sample["power"])))
+        if sample["cpu_utilization"]:
+            cpu_utilization_by_time.append(sum(sample["cpu_utilization"]))
+        if sample["cpu_memory"]:
+            cpu_memory_by_time.append(sum(sample["cpu_memory"]))
+        if sample["cpu_power"]:
+            cpu_power_by_time.append((timestamp, sum(sample["cpu_power"])))
+        if sample["memory_bandwidth"]:
+            memory_bandwidth_by_time.append(sum(sample["memory_bandwidth"]))
 
     metrics: dict[str, float] = {}
     if utilization_by_time:
         metrics["average_gpu_utilization_percent"] = fmean(utilization_by_time)
     if memory_by_time:
         metrics["peak_gpu_memory_mib"] = max(memory_by_time)
+    if cpu_utilization_by_time:
+        metrics["average_cpu_utilization_percent"] = fmean(cpu_utilization_by_time)
+    if cpu_memory_by_time:
+        metrics["peak_cpu_memory_mib"] = max(cpu_memory_by_time)
+    if memory_bandwidth_by_time:
+        metrics["measured_memory_bandwidth_gbps"] = fmean(memory_bandwidth_by_time)
+    energy_parts: list[float] = []
     if power_by_time:
         metrics["average_gpu_power_watts"] = fmean(value for _, value in power_by_time)
         energy: float | None = None
@@ -606,7 +860,28 @@ def read_telemetry_metrics(
                 "because telemetry timestamps were insufficient."
             )
         if energy is not None:
-            metrics["energy_joules"] = energy
+            energy_parts.append(energy)
+    if cpu_power_by_time:
+        metrics["average_cpu_power_watts"] = fmean(value for _, value in cpu_power_by_time)
+        cpu_energy: float | None = None
+        if parsed_timestamps and len(cpu_power_by_time) >= 2:
+            cpu_energy = sum(
+                (right_time - left_time) * (left_power + right_power) / 2
+                for (left_time, left_power), (right_time, right_power) in zip(
+                    cpu_power_by_time, cpu_power_by_time[1:], strict=False
+                )
+                if right_time >= left_time
+            )
+        elif duration_seconds is not None and duration_seconds >= 0:
+            cpu_energy = metrics["average_cpu_power_watts"] * duration_seconds
+            warnings.append(
+                f"CPU energy for {source.name} uses average sampled package power times run "
+                "duration because telemetry timestamps were insufficient."
+            )
+        if cpu_energy is not None:
+            energy_parts.append(cpu_energy)
+    if energy_parts:
+        metrics["energy_joules"] = sum(energy_parts)
     return metrics, warnings
 
 
@@ -616,7 +891,7 @@ def _aggregate(records: Sequence[Mapping[str, Any]]) -> dict[str, float | int]:
         values = [record[field] for record in records if field in record]
         if not values:
             continue
-        if field == "peak_gpu_memory_mib":
+        if field in {"peak_gpu_memory_mib", "peak_cpu_memory_mib"}:
             aggregate[field] = max(values)
         elif field == "energy_joules":
             # Energy is additive across explicitly measured repetitions.
@@ -665,7 +940,17 @@ def normalize_summary(
     failed_repetitions = 0
     for path in raw_output_paths:
         try:
-            raw_records.append(read_raw_metrics(path))
+            raw_records.append(
+                read_raw_metrics(
+                    path,
+                    backend=str(result.get("backend") or "") or None,
+                    measurement_method=(
+                        str(result["measurement_method"])
+                        if result.get("measurement_method")
+                        else None
+                    ),
+                )
+            )
         except ResultError as exc:
             failed_repetitions += 1
             combined_warnings.append(str(exc))
@@ -712,6 +997,10 @@ def normalize_summary(
             "peak_gpu_memory_mib",
             "average_gpu_utilization_percent",
             "average_gpu_power_watts",
+            "peak_cpu_memory_mib",
+            "average_cpu_utilization_percent",
+            "average_cpu_power_watts",
+            "measured_memory_bandwidth_gbps",
             "energy_joules",
         ):
             present = sum(field in record for record in telemetry_records)
@@ -838,6 +1127,14 @@ _NULL_IS_MEANINGFUL = {
     "ignore_eos",
     "quantization",
     "gpu_memory_utilization",
+    "measurement_method",
+    "measurement_scope",
+    "backend_internal_warmup",
+    "workload_manifest_sha256",
+    "model_artifact_sha256",
+    "telemetry_scope",
+    "energy_scope",
+    "batch_size",
 }
 
 
@@ -851,6 +1148,7 @@ def _matching_null_is_meaningful(
         "accelerator_name",
         "software_versions.cuda_runtime",
         "software_versions.nvidia_driver",
+        "memory_binding",
     }
 
 
@@ -962,6 +1260,117 @@ def check_compatibility(left: Mapping[str, Any], right: Mapping[str, Any]) -> di
         "mismatched_fields": mismatches,
         "missing_fields": missing,
         "failed_runs": failed_runs,
+    }
+
+
+BACKEND_TREATMENT_FIELDS = (
+    "benchmark_type",
+    "model_id",
+    "resolved_model_revision",
+    "tokenizer_id",
+    "resolved_tokenizer_revision",
+    "model_precision",
+    "quantization",
+    "model_artifact_source_revision",
+    "execution_provider",
+    "hardware_type",
+    "accelerator_name",
+    "accelerator_count",
+    "cpu_model",
+    "socket_count",
+    "numa_node_count",
+    "measurement_method",
+    "measurement_scope",
+    "workload_manifest_sha256",
+    "input_length",
+    "output_length",
+    "actual_input_tokens",
+    "actual_output_tokens",
+    "generation_config",
+    "temperature",
+    "top_p",
+    "ignore_eos",
+    "number_of_requests",
+    "request_rate",
+    "maximum_concurrency",
+    "seed",
+    "warmup_runs",
+    "repetitions",
+)
+
+
+def check_backend_treatment_compatibility(
+    left: Mapping[str, Any], right: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Allow backend/version as the sole intended treatment difference."""
+
+    evidence: list[dict[str, Any]] = []
+    if left.get("backend") == right.get("backend"):
+        evidence.append(
+            {
+                "field": "backend",
+                "left": left.get("backend"),
+                "right": right.get("backend"),
+                "reason": "backend-treatment comparison requires distinct backends",
+            }
+        )
+    for side, summary in (("left", left), ("right", right)):
+        if summary.get("measurement_method") != "shared_openai_streaming":
+            evidence.append(
+                {
+                    "field": "measurement_method",
+                    "side": side,
+                    "value": summary.get("measurement_method"),
+                    "reason": "only the shared API harness has a common measurement boundary",
+                }
+            )
+        if summary.get("status") not in {"completed", "success", "successful"}:
+            evidence.append(
+                {
+                    "field": "status",
+                    "side": side,
+                    "value": summary.get("status"),
+                    "reason": "run did not complete successfully",
+                }
+            )
+    for field in BACKEND_TREATMENT_FIELDS:
+        left_value = _get_dotted(left, field)
+        right_value = _get_dotted(right, field)
+        if left_value is None and right_value is None and (
+            field in {"quantization", "request_rate"}
+            or (
+                field in {"accelerator_name", "accelerator_count"}
+                and left.get("hardware_type") == right.get("hardware_type") == "cpu"
+            )
+        ):
+            continue
+        if (
+            left_value is _MISSING
+            or right_value is _MISSING
+            or left_value is None
+            or right_value is None
+        ):
+            evidence.append(
+                {
+                    "field": field,
+                    "left": None if left_value is _MISSING else left_value,
+                    "right": None if right_value is _MISSING else right_value,
+                    "reason": "controlled backend evidence is missing",
+                }
+            )
+        elif left_value != right_value:
+            evidence.append(
+                {
+                    "field": field,
+                    "left": left_value,
+                    "right": right_value,
+                    "reason": "control differs",
+                }
+            )
+    return {
+        "status": "compatible" if not evidence else "incompatible",
+        "intended_difference": "backend",
+        "evidence": evidence,
     }
 
 
