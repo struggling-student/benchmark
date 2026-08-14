@@ -9,7 +9,7 @@ from typing import Any
 
 from .results import SCHEMA_VERSION, ResultError, load_summary
 
-SUPPORTED_SUMMARY_SCHEMAS = {"1.0", SCHEMA_VERSION}
+SUPPORTED_SUMMARY_SCHEMAS = {"1.0", "1.1", SCHEMA_VERSION}
 
 
 @dataclass(frozen=True)
@@ -121,6 +121,8 @@ def catalog_row(entry: CatalogEntry) -> dict[str, Any]:
     )
     if hardware_type == "gpu":
         platform = "GPU"
+    elif hardware_type == "hybrid":
+        platform = "CPU + GPU"
     elif hardware_type == "cpu" and "hbm" in str(memory_type or "").lower():
         platform = "CPU · HBM"
     elif hardware_type == "cpu" and "ddr" in str(memory_type or "").lower():
@@ -137,6 +139,11 @@ def catalog_row(entry: CatalogEntry) -> dict[str, Any]:
         "date": timestamp[:10] if len(timestamp) >= 10 else None,
         "status": summary.get("status"),
         "benchmark_type": summary.get("benchmark_type"),
+        "backend": summary.get("backend"),
+        "backend_profile": summary.get("backend_profile"),
+        "provider": summary.get("execution_provider"),
+        "artifact_variant": summary.get("model_artifact_variant"),
+        "measurement_method": summary.get("measurement_method"),
         "model_id": summary.get("model_id"),
         "model_scale": summary.get("model_parameter_scale"),
         "hardware_type": summary.get("hardware_type"),
