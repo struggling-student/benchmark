@@ -73,9 +73,16 @@ def test_streamlit_dashboard_renders_all_views(tmp_path: Path) -> None:
 
     app = AppTest.from_string(script, default_timeout=10).run()
     assert not app.exception
-    assert app.title[0].value == "LLM inference benchmark results"
+    assert app.title[0].value == "LLM benchmark studio"
+    assert app.sidebar.segmented_control[0].value == "Light"
 
-    for page in ("Run detail", "Explorer", "CPU memory study", "Compare"):
+    app.sidebar.segmented_control[0].set_value("Dark")
+    app.run(timeout=10)
+    assert not app.exception
+    assert app.sidebar.segmented_control[0].value == "Dark"
+    assert any("--bench-bg: #0A0F1D" in item.value for item in app.markdown)
+
+    for page in ("Run detail", "Explorer", "Memory study", "Compare"):
         app.sidebar.radio[0].set_value(page)
         app.run(timeout=10)
         assert not app.exception
@@ -91,9 +98,20 @@ def test_empty_results_root_defaults_to_full_simulated_study(tmp_path: Path) -> 
     assert app.metric[0].value == "17"
     assert not list(tmp_path.iterdir())
 
-    for page in ("Run detail", "Explorer", "CPU memory study", "Compare"):
+    for page in ("Run detail", "Explorer", "Memory study", "Compare"):
         app.sidebar.radio[0].set_value(page)
         app.run(timeout=20)
         assert not app.exception
 
     assert not list(tmp_path.iterdir())
+
+
+def test_omitted_results_root_opens_demo_study() -> None:
+    script = "from llm_bench.dashboard import run_dashboard\nrun_dashboard()\n"
+
+    app = AppTest.from_string(script, default_timeout=20).run()
+
+    assert not app.exception
+    assert app.sidebar.selectbox[0].options == ["Demo study"]
+    assert app.sidebar.selectbox[0].value == "Demo study"
+    assert app.metric[0].value == "17"

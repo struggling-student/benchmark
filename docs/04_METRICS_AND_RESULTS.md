@@ -137,10 +137,12 @@ A valid pair uses equivalent input lengths, requested output lengths, counts, co
 
 ## Interactive visualization and comparison
 
-Install and launch the optional Streamlit dashboard separately from benchmark execution:
+Install the optional Streamlit dashboard separately from benchmark execution. Omit the results root
+for the deterministic in-memory study, or provide one to inspect measured files:
 
 ```bash
 pip install -e ".[dashboard]"
+llm-bench dashboard
 llm-bench dashboard --results-root "$RESULTS_ROOT"
 ```
 
@@ -149,11 +151,10 @@ It recursively catalogs supported summaries and provides filters for platform, m
 model, benchmark type, status, precision, evidence source, and workload. Malformed results and
 duplicate run IDs appear as diagnostics; filesystem paths remain the unique identities.
 
-The **Data source** control can show measured results, a deterministic simulated study, or both.
-If the measured catalog is empty, the simulated study is selected initially so the complete UI can
-be evaluated before CPU-HBM hardware is available. Simulated summaries, five-repetition records,
-and GPU/CPU telemetry stay in memory: they do not create result files and are excluded from the
-measured catalog CSV.
+With a results root, the **Data source** control can show measured results, a deterministic simulated
+study, or both. Without one, the dashboard opens directly into the simulated study. Simulated
+summaries, five-repetition records, and GPU/CPU telemetry stay in memory: they do not create result
+files and are excluded from the measured catalog CSV.
 
 Use the five views as follows:
 
@@ -166,13 +167,13 @@ Use the five views as follows:
   instrumentation is recorded.
 - **Explorer** offers a single-metric workload slice and a two-metric trade-off. Every mark remains
   an individual run; differently configured observations are not silently aggregated.
-- **CPU memory study** pairs CPU DDR and HBM runs only when the recorded model, CPU, backend,
-  workload, precision, threading, NUMA policy, and instrumentation controls match. It visualizes
-  bandwidth, prefill/decode behavior, placement, and direction-aware HBM effects.
-- **Compare** requires two explicitly selected runs. The formal lens uses the established
-  compatibility gate; the CPU memory-treatment lens declares memory as the intended difference
-  while enforcing the other CPU controls; the descriptive lens suppresses all ratios. Visible
-  metrics, including preview CPU fields, can be downloaded as JSON or CSV.
+- **Memory study** switches between an aligned-shape GPU-versus-CPU platform view and controlled CPU
+  DDR-versus-HBM pairs. It visualizes throughput, latency, memory, bandwidth, placement, and
+  direction-aware HBM effects.
+- **Compare** accepts two to six explicitly selected runs and a configurable baseline. The
+  like-for-like lens uses the established compatibility gate; the CPU memory-treatment lens declares
+  memory as the intended difference while enforcing the other CPU controls; the absolute lens keeps
+  incompatible observations descriptive. Visible metrics can be downloaded as JSON or CSV.
 
 For mean-aggregated metrics, repetition error bars show one sample standard deviation when at least
 two observations exist. They are not confidence intervals and do not establish statistical

@@ -141,10 +141,17 @@ def _dashboard(args: argparse.Namespace) -> int:
         "true",
         "--browser.gatherUsageStats",
         "false",
-        "--",
-        "--results-root",
-        str(args.results_root.expanduser().resolve()),
+        "--client.toolbarMode",
+        "minimal",
     ]
+    if args.results_root is not None:
+        command.extend(
+            (
+                "--",
+                "--results-root",
+                str(args.results_root.expanduser().resolve()),
+            )
+        )
     try:
         return subprocess.call(command)
     except KeyboardInterrupt:
@@ -233,7 +240,11 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard = subparsers.add_parser(
         "dashboard", help="launch the optional interactive results dashboard"
     )
-    dashboard.add_argument("--results-root", type=Path, required=True)
+    dashboard.add_argument(
+        "--results-root",
+        type=Path,
+        help="results directory; omit to open the in-memory demo study",
+    )
     dashboard.add_argument("--host", default="127.0.0.1")
     dashboard.add_argument("--port", type=int, default=8501)
     dashboard.set_defaults(handler=_dashboard)

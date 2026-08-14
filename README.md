@@ -80,24 +80,26 @@ The comparison writes `comparison.json` and `comparison.csv`. It reports configu
 
 ## Interactive results dashboard
 
-Install the optional visualization dependencies and point the read-only dashboard at any local
-or copied results root:
+Install the optional visualization dependencies. Launch without a results root to explore the
+in-memory demo, or point the read-only dashboard at local or copied measurements:
 
 ```bash
 pip install -e ".[dashboard]"
+llm-bench dashboard
 llm-bench dashboard --results-root "$RESULTS_ROOT"
 ```
 
-The dashboard discovers every supported `summary.json` recursively and now presents campaign
-health, performance trade-offs, metric completeness, run/repetition detail, hardware-aware
-resource telemetry, free-form exploration, and explicit two-run comparison. A dedicated CPU memory
-study view is ready for controlled DDR-versus-HBM pairs and keeps placement evidence visible.
+The dashboard discovers every supported `summary.json` recursively and presents campaign health,
+performance trade-offs, metric completeness, run/repetition detail, hardware telemetry, and
+free-form exploration. The memory study visualizes GPU-versus-CPU platforms and controlled
+CPU DDR-versus-HBM pairs. Compare accepts two to six runs with absolute, like-for-like, and CPU
+memory-treatment lenses. The compact sidebar, hidden Streamlit toolbar, and accessible light/dark
+palettes keep the focus on data and charts.
 
-When a results root is empty, the dashboard opens a deterministic in-memory preview containing GPU,
-CPU-DDR, and CPU-HBM runs. Preview values are prominently labelled simulated, never written to the
-results root, and excluded from the measured catalog export. Choose **Measured results** in the
-sidebar to show only filesystem evidence. The dashboard never assigns an overall score or evaluates
-model-answer quality.
+Without `--results-root`, the dashboard opens a deterministic in-memory preview containing GPU,
+CPU-DDR, and CPU-HBM runs. With a results root, the data-source menu can show filesystem evidence,
+the demo study, or both. Preview values are labelled simulated, never written to disk, and excluded
+from measured exports. The dashboard never assigns an overall score or evaluates answer quality.
 
 New runs also contain `measurements.json`, a stable normalized record of each configured measured
 repetition. Older result directories remain usable: the dashboard derives repetition values in

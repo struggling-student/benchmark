@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import json
 import math
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +25,7 @@ from llm_bench.dashboard_data import (
     simulated_dataset,
     telemetry_for_entry,
 )
-from llm_bench.interpretation import comparison_narrative, repetition_variability
+from llm_bench.interpretation import repetition_variability
 from llm_bench.measurements import read_telemetry_series, resolve_recorded_path
 from llm_bench.metrics import METRIC_SPECS, MetricSpec
 from llm_bench.results import (
@@ -33,18 +35,67 @@ from llm_bench.results import (
     compare_summaries,
 )
 
-PLATFORM_COLORS = {
-    "GPU": "#7257E8",
-    "CPU · HBM": "#0E9F9A",
-    "CPU · DDR": "#E58B32",
-    "CPU": "#667085",
-    "UNKNOWN": "#98A2B3",
+_THEME_TOKENS = {
+    "light": {
+        "background": "#F4F6FA",
+        "surface": "#FFFFFF",
+        "surface_raised": "#FFFFFF",
+        "surface_soft": "#EEF1F7",
+        "surface_accent": "#EEEDFF",
+        "text": "#182033",
+        "muted": "#667085",
+        "subtle": "#8A94A6",
+        "border": "#DDE3EC",
+        "border_strong": "#C8D0DD",
+        "primary": "#5B5BD6",
+        "primary_strong": "#4545B8",
+        "primary_text": "#39399D",
+        "grid": "#E5EAF1",
+        "positive": "#087F5B",
+        "negative": "#C92A3A",
+        "warning": "#B45F06",
+        "info": "#2563A8",
+        "shadow": "rgba(24, 32, 51, .08)",
+        "gpu": "#6956E8",
+        "hbm": "#008C7A",
+        "ddr": "#D97706",
+        "neutral": "#64748B",
+    },
+    "dark": {
+        "background": "#0A0F1D",
+        "surface": "#111827",
+        "surface_raised": "#151E2F",
+        "surface_soft": "#1B2538",
+        "surface_accent": "#25244A",
+        "text": "#F3F6FC",
+        "muted": "#A8B2C7",
+        "subtle": "#7F8BA3",
+        "border": "#2A3549",
+        "border_strong": "#3A4760",
+        "primary": "#9A8CFF",
+        "primary_strong": "#B8ADFF",
+        "primary_text": "#C8C1FF",
+        "grid": "#29354A",
+        "positive": "#3ED6A1",
+        "negative": "#FF7180",
+        "warning": "#F6C15C",
+        "info": "#64B5FF",
+        "shadow": "rgba(0, 0, 0, .28)",
+        "gpu": "#A78BFA",
+        "hbm": "#2DD4BF",
+        "ddr": "#FBBF24",
+        "neutral": "#94A3B8",
+    },
 }
-STATUS_COLORS = {
-    "completed": "#12B76A",
-    "failed": "#F04438",
-    "running": "#2E90FA",
-    "partial": "#F79009",
+
+_ACTIVE_THEME: ContextVar[str] = ContextVar("dashboard_theme", default="light")
+
+_VIEW_META = {
+    "Overview": ("dashboard", "Campaign snapshot"),
+    "Run detail": ("search_insights", "Inspect one run"),
+    "Explorer": ("query_stats", "Explore metrics"),
+    "Memory study": ("memory", "GPU, CPU, DDR, HBM"),
+    "Compare": ("compare_arrows", "Compare selected runs"),
 }
 
 _HEADLINE_FIELDS = {
@@ -182,15 +233,50 @@ def _default_spec(specs: Sequence[MetricSpec], benchmark_type: str) -> int:
     return next((index for index, spec in enumerate(specs) if spec.field == preferred), 0)
 
 
+def _theme_tokens(theme: str | None = None) -> Mapping[str, str]:
+    selected = (theme or _ACTIVE_THEME.get()).strip().lower()
+    return _THEME_TOKENS.get(selected, _THEME_TOKENS["light"])
+
+
+def _platform_colors() -> dict[str, str]:
+    colors = _theme_tokens()
+    return {
+        "GPU": colors["gpu"],
+        "CPU · HBM": colors["hbm"],
+        "CPU · DDR": colors["ddr"],
+        "CPU": colors["neutral"],
+        "UNKNOWN": colors["subtle"],
+    }
+
+
+def _categorical_colors() -> list[str]:
+    colors = _theme_tokens()
+    return [
+        colors["gpu"],
+        colors["hbm"],
+        colors["ddr"],
+        colors["info"],
+        colors["positive"],
+        colors["primary_strong"],
+        colors["neutral"],
+    ]
+
+
 def _apply_chart_style(figure: Any, *, height: int = 390) -> Any:
+    colors = _theme_tokens()
+    is_dark = _ACTIVE_THEME.get() == "dark"
     figure.update_layout(
-        template="plotly_white",
-        paper_bgcolor="#FFFFFF",
-        plot_bgcolor="#FFFFFF",
+        template="plotly_dark" if is_dark else "plotly_white",
+        paper_bgcolor=colors["surface"],
+        plot_bgcolor=colors["surface"],
         height=height,
         margin={"l": 20, "r": 20, "t": 62, "b": 92},
-        font={"family": "Inter, ui-sans-serif, system-ui", "color": "#344054"},
-        title_font={"size": 17, "color": "#101828"},
+        colorway=_categorical_colors(),
+        font={
+            "family": "Inter, ui-sans-serif, system-ui",
+            "color": colors["muted"],
+        },
+        title_font={"size": 17, "color": colors["text"]},
         legend={
             "orientation": "h",
             "yanchor": "top",
@@ -200,139 +286,497 @@ def _apply_chart_style(figure: Any, *, height: int = 390) -> Any:
             "title": None,
             "font": {"size": 11},
         },
-        hoverlabel={"font_size": 13},
+        hoverlabel={
+            "font_size": 13,
+            "bgcolor": colors["surface_raised"],
+            "bordercolor": colors["border_strong"],
+            "font_color": colors["text"],
+        },
     )
-    figure.update_xaxes(showgrid=False, linecolor="#EAECF0")
-    figure.update_yaxes(gridcolor="#EAECF0", zerolinecolor="#D0D5DD")
+    figure.update_xaxes(
+        showgrid=False,
+        linecolor=colors["border"],
+        tickfont={"color": colors["muted"]},
+        title_font={"color": colors["muted"]},
+    )
+    figure.update_yaxes(
+        gridcolor=colors["grid"],
+        zerolinecolor=colors["border_strong"],
+        tickfont={"color": colors["muted"]},
+        title_font={"color": colors["muted"]},
+    )
     return figure
 
 
-def _inject_styles(st: Any) -> None:
+def _inject_styles(st: Any, theme: str) -> None:
+    colors = _theme_tokens(theme)
+    color_scheme = "dark" if theme == "dark" else "light"
     st.markdown(
-        """
+        f"""
         <style>
-        :root {
-            --bench-ink: #101828;
-            --bench-muted: #667085;
-            --bench-border: #e4e7ec;
-            --bench-violet: #7257e8;
-        }
-        [data-testid="stAppViewContainer"] {
-            background:
-                radial-gradient(circle at 82% -10%, rgba(114,87,232,.10), transparent 30rem),
-                #f8fafc;
+        :root {{
+            --bench-bg: {colors["background"]};
+            --bench-surface: {colors["surface"]};
+            --bench-raised: {colors["surface_raised"]};
+            --bench-soft: {colors["surface_soft"]};
+            --bench-accent-soft: {colors["surface_accent"]};
+            --bench-ink: {colors["text"]};
+            --bench-muted: {colors["muted"]};
+            --bench-subtle: {colors["subtle"]};
+            --bench-border: {colors["border"]};
+            --bench-border-strong: {colors["border_strong"]};
+            --bench-primary: {colors["primary"]};
+            --bench-primary-strong: {colors["primary_strong"]};
+            --bench-primary-text: {colors["primary_text"]};
+            --bench-positive: {colors["positive"]};
+            --bench-negative: {colors["negative"]};
+            --bench-warning: {colors["warning"]};
+            --bench-info: {colors["info"]};
+            --bench-shadow: {colors["shadow"]};
+            color-scheme: {color_scheme};
+        }}
+
+        html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"] {{
+            color-scheme: {color_scheme};
+            background: var(--bench-bg);
             color: var(--bench-ink);
-        }
+        }}
+        [data-testid="stAppViewContainer"] {{
+            --text-color: var(--bench-ink);
+            --background-color: var(--bench-bg);
+            --secondary-background-color: var(--bench-soft);
+            --primary-color: var(--bench-primary);
+            background:
+                radial-gradient(
+                    circle at 82% -8%,
+                    color-mix(in srgb, var(--bench-primary) 12%, transparent),
+                    transparent 29rem
+                ),
+                radial-gradient(
+                    circle at 50% 120%,
+                    color-mix(in srgb, var(--bench-info) 7%, transparent),
+                    transparent 36rem
+                ),
+                var(--bench-bg);
+        }}
+        [data-testid="stHeader"] {{
+            height: 0 !important;
+            min-height: 0 !important;
+            border: 0 !important;
+            background: transparent !important;
+        }}
+        [data-testid="stToolbar"] {{ display: none !important; }}
+        [data-testid="stMainBlockContainer"] {{
+            max-width: 1540px;
+            padding-top: 1.35rem;
+            padding-bottom: 4rem;
+        }}
         [data-testid="stAppViewContainer"] h1,
         [data-testid="stAppViewContainer"] h2,
-        [data-testid="stAppViewContainer"] h3 {
-            color: var(--bench-ink);
-        }
+        [data-testid="stAppViewContainer"] h3,
+        [data-testid="stAppViewContainer"] h4,
+        [data-testid="stAppViewContainer"] p,
+        [data-testid="stAppViewContainer"] li,
+        [data-testid="stAppViewContainer"] label {{ color: var(--bench-ink); }}
+        [data-testid="stAppViewContainer"] h1 {{
+            font-size: clamp(2rem, 3vw, 2.7rem);
+            line-height: 1.08;
+            letter-spacing: -.045em;
+            margin-bottom: .4rem;
+        }}
         [data-testid="stAppViewContainer"] [data-testid="stCaptionContainer"],
-        [data-testid="stAppViewContainer"] [data-testid="stCaptionContainer"] p {
+        [data-testid="stAppViewContainer"] [data-testid="stCaptionContainer"] p {{
             color: var(--bench-muted);
-        }
-        [data-testid="stMainBlockContainer"] {
-            max-width: 1560px;
-            padding-top: 1.8rem;
-            padding-bottom: 4rem;
-        }
-        [data-testid="stSidebar"] {
+        }}
+
+        [data-testid="stSidebar"] {{
+            min-width: 336px !important;
+            width: 336px !important;
             border-right: 1px solid var(--bench-border);
-            background: rgba(255,255,255,.92);
-        }
+            background: color-mix(in srgb, var(--bench-surface) 94%, transparent);
+            box-shadow: 10px 0 34px color-mix(in srgb, var(--bench-shadow) 45%, transparent);
+        }}
+        [data-testid="stSidebar"] > div:first-child {{ width: 336px !important; }}
+        [data-testid="stSidebarContent"] {{ padding-top: .85rem; }}
         [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
         [data-testid="stSidebar"] [role="radiogroup"] p,
         [data-testid="stSidebar"] details > summary p,
-        [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {
-            color: #344054;
-        }
-        [data-testid="stMetric"] {
-            min-height: 112px;
-            padding: 1.05rem 1.1rem;
-            border: 1px solid var(--bench-border);
-            border-radius: 16px;
-            background: rgba(255,255,255,.92);
-            box-shadow: 0 1px 2px rgba(16,24,40,.04);
-        }
-        [data-testid="stMetricLabel"] {
+        [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {{
             color: var(--bench-muted);
-        }
-        [data-testid="stMetricLabel"] p {
-            white-space: normal;
-            line-height: 1.2;
-        }
-        [data-testid="stMetricValue"] {
+        }}
+        .bench-brand {{
+            display: flex;
+            align-items: center;
+            gap: .75rem;
+            margin: .1rem 0 .85rem;
+            padding: .2rem .15rem .75rem;
+            border-bottom: 1px solid var(--bench-border);
+        }}
+        .bench-brand-mark {{
+            display: grid;
+            place-items: center;
+            width: 2.25rem;
+            height: 2.25rem;
+            border-radius: 11px;
+            color: white;
+            background: linear-gradient(145deg, var(--bench-primary-strong), var(--bench-primary));
+            box-shadow: 0 8px 20px color-mix(in srgb, var(--bench-primary) 28%, transparent);
+            font-size: 1.05rem;
+            font-weight: 800;
+        }}
+        .bench-brand-copy strong {{
+            display: block;
             color: var(--bench-ink);
-            letter-spacing: -.025em;
-        }
-        div[data-testid="stPlotlyChart"], div[data-testid="stDataFrame"] {
-            border: 1px solid var(--bench-border);
-            border-radius: 16px;
-            overflow: hidden;
-            background: white;
-        }
-        .bench-kicker {
-            color: var(--bench-violet);
+            font-size: .98rem;
+            letter-spacing: -.015em;
+        }}
+        .bench-brand-copy span {{
+            color: var(--bench-muted);
             font-size: .76rem;
-            font-weight: 750;
+        }}
+        .bench-sidebar-label {{
+            color: var(--bench-subtle);
+            font-size: .67rem;
+            font-weight: 800;
             letter-spacing: .14em;
             text-transform: uppercase;
-            margin-bottom: -.45rem;
-        }
-        .bench-page {
-            margin: .35rem 0 1.1rem;
-            padding: 1.15rem 1.25rem;
+            margin: 1rem 0 .38rem;
+        }}
+        .bench-sidebar-summary {{
+            display: grid;
+            grid-template-columns: 1fr auto;
+            align-items: center;
+            gap: .3rem .8rem;
+            margin: .7rem 0 .25rem;
+            padding: .78rem .85rem;
             border: 1px solid var(--bench-border);
-            border-radius: 18px;
-            background: linear-gradient(120deg, #fff, #fbfaff);
-        }
-        .bench-page h2 {
-            color: var(--bench-ink);
-            font-size: 1.55rem;
-            letter-spacing: -.025em;
-            margin: 0 0 .25rem;
-        }
-        .bench-page p {
+            border-radius: 13px;
+            background: var(--bench-soft);
             color: var(--bench-muted);
-            margin: 0;
-            max-width: 78ch;
-        }
-        .bench-run-card {
+            font-size: .76rem;
+        }}
+        .bench-sidebar-summary strong {{ color: var(--bench-ink); font-size: .84rem; }}
+        .bench-sidebar-summary .bench-live {{ color: var(--bench-positive); }}
+
+        .st-key-page [role="radiogroup"] {{ gap: .32rem; }}
+        .st-key-page [role="radiogroup"] label {{
+            width: 100%;
+            min-height: 2.55rem;
+            padding: .56rem .68rem;
+            border: 1px solid transparent;
+            border-radius: 11px;
+            background: transparent;
+            transition: background .16s ease, border-color .16s ease, transform .16s ease;
+        }}
+        .st-key-page [role="radiogroup"] label:hover {{
+            background: var(--bench-soft);
+            border-color: var(--bench-border);
+            transform: translateX(2px);
+        }}
+        .st-key-page [role="radiogroup"] label:has(input:checked) {{
+            background: var(--bench-accent-soft);
+            border-color: color-mix(in srgb, var(--bench-primary) 42%, var(--bench-border));
+            box-shadow: inset 3px 0 0 var(--bench-primary);
+        }}
+        .st-key-page [data-testid="stRadioOption"] > div > div > div:first-child {{
+            display: none;
+        }}
+        .st-key-page [role="radiogroup"] label:has(input:checked) p {{
+            color: var(--bench-primary-text) !important;
+            font-weight: 720;
+        }}
+
+        [data-baseweb="select"] > div,
+        [data-baseweb="input"] > div,
+        [data-baseweb="base-input"],
+        input, textarea {{
+            color: var(--bench-ink) !important;
+            background: var(--bench-raised) !important;
+            border-color: var(--bench-border-strong) !important;
+        }}
+        [data-baseweb="select"] span,
+        [data-baseweb="select"] div,
+        [data-baseweb="input"] input {{ color: var(--bench-ink) !important; }}
+        [data-baseweb="select"] > div > div:last-child {{
+            background: var(--bench-raised) !important;
+        }}
+        [data-baseweb="select"] svg {{
+            color: var(--bench-muted) !important;
+            fill: var(--bench-muted) !important;
+        }}
+        .react-aria-ComboBox [role="group"] {{
+            border: 1px solid var(--bench-border-strong) !important;
+            border-radius: 9px !important;
+            background: var(--bench-raised) !important;
+            overflow: hidden;
+        }}
+        .react-aria-ComboBox [role="group"] input {{
+            border: 0 !important;
+            background: var(--bench-raised) !important;
+        }}
+        .react-aria-ComboBox [role="group"] button {{
+            color: var(--bench-muted) !important;
+            border: 0 !important;
+            background: var(--bench-raised) !important;
+        }}
+        [data-baseweb="popover"] [role="listbox"],
+        [data-baseweb="menu"],
+        [role="listbox"] {{
+            color: var(--bench-ink) !important;
+            background: var(--bench-raised) !important;
+            border: 1px solid var(--bench-border);
+            box-shadow: 0 14px 36px var(--bench-shadow);
+        }}
+        [role="option"] {{
+            color: var(--bench-ink) !important;
+            background: var(--bench-raised) !important;
+        }}
+        [role="option"]:hover {{ background: var(--bench-soft) !important; }}
+        [role="option"][aria-selected="true"] {{
+            color: var(--bench-primary-text) !important;
+            background: var(--bench-accent-soft) !important;
+        }}
+        [data-baseweb="tag"] {{
+            color: var(--bench-primary-text) !important;
+            background: var(--bench-accent-soft) !important;
+            border: 0 !important;
+            box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bench-primary) 35%, transparent);
+        }}
+        [data-testid="stButtonGroup"] [role="radiogroup"] {{
+            width: 100%;
+            padding: .18rem;
+            border: 1px solid var(--bench-border);
+            border-radius: 11px;
+            background: var(--bench-soft);
+        }}
+        [data-testid="stButtonGroup"] button[data-variant="segmented_control"] {{
+            flex: 1;
+            color: var(--bench-muted) !important;
+            border: 1px solid transparent !important;
+            border-radius: 8px !important;
+            background: transparent !important;
+        }}
+        [data-testid="stButtonGroup"] button[data-variant="segmented_control"] p {{
+            color: var(--bench-muted) !important;
+        }}
+        [data-testid="stButtonGroup"] button[aria-checked="true"] {{
+            color: var(--bench-ink) !important;
+            background: var(--bench-raised) !important;
+            box-shadow: 0 1px 3px var(--bench-shadow);
+        }}
+        [data-testid="stButtonGroup"] button[aria-checked="true"] p {{
+            color: var(--bench-ink) !important;
+        }}
+
+        [data-testid="stButton"] button,
+        [data-testid="stDownloadButton"] button {{
+            color: var(--bench-ink);
+            border-color: var(--bench-border-strong);
+            border-radius: 10px;
+            background: var(--bench-raised);
+        }}
+        [data-testid="stButton"] button:hover,
+        [data-testid="stDownloadButton"] button:hover {{
+            color: var(--bench-primary-text);
+            border-color: var(--bench-primary);
+            background: var(--bench-accent-soft);
+        }}
+        [data-testid="stExpander"] {{
+            border: 1px solid var(--bench-border) !important;
+            border-radius: 12px !important;
+            background: color-mix(in srgb, var(--bench-raised) 78%, transparent);
+            overflow: hidden;
+        }}
+        [data-testid="stExpander"] summary {{
+            color: var(--bench-ink) !important;
+            background: var(--bench-soft) !important;
+        }}
+        [data-testid="stExpander"] summary p {{ color: var(--bench-ink) !important; }}
+        [data-testid="stExpanderDetails"] {{
+            background: var(--bench-raised);
+            border-top: 1px solid var(--bench-border);
+        }}
+
+        [data-testid="stMetric"] {{
+            min-height: 112px;
+            padding: 1rem 1.05rem;
+            border: 1px solid var(--bench-border);
+            border-radius: 15px;
+            background: linear-gradient(
+                145deg,
+                var(--bench-raised),
+                color-mix(in srgb, var(--bench-soft) 45%, var(--bench-raised))
+            );
+            box-shadow: 0 5px 18px color-mix(in srgb, var(--bench-shadow) 50%, transparent);
+        }}
+        [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] p {{
+            color: var(--bench-muted) !important;
+        }}
+        [data-testid="stMetricLabel"] p {{ white-space: normal; line-height: 1.2; }}
+        [data-testid="stMetricValue"] {{
+            color: var(--bench-ink);
+            letter-spacing: -.035em;
+        }}
+        [data-testid="stMetricDelta"] {{ color: var(--bench-positive); }}
+
+        div[data-testid="stPlotlyChart"], div[data-testid="stDataFrame"] {{
+            border: 1px solid var(--bench-border);
+            border-radius: 15px;
+            overflow: hidden;
+            background: var(--bench-surface);
+            box-shadow: 0 5px 20px color-mix(in srgb, var(--bench-shadow) 44%, transparent);
+        }}
+        [role="tablist"] {{
+            width: fit-content;
+            gap: .25rem;
+            padding: .25rem;
+            border: 1px solid var(--bench-border);
+            border-radius: 12px;
+            background: var(--bench-soft);
+        }}
+        [data-testid="stTab"] {{
+            height: 2.45rem;
+            padding: 0 .85rem;
+            color: var(--bench-muted) !important;
+            border-radius: 9px;
+        }}
+        [data-testid="stTab"] p {{ color: var(--bench-muted) !important; }}
+        [data-testid="stTab"][aria-selected="true"] {{
+            color: var(--bench-ink) !important;
+            background: var(--bench-raised);
+            box-shadow: 0 1px 4px var(--bench-shadow);
+        }}
+        [data-testid="stTab"][aria-selected="true"] p {{
+            color: var(--bench-ink) !important;
+        }}
+        .react-aria-SelectionIndicator {{ display: none; }}
+
+        .bench-kicker {{
+            color: var(--bench-primary-text);
+            font-size: .7rem;
+            font-weight: 800;
+            letter-spacing: .15em;
+            text-transform: uppercase;
+            margin-bottom: -.35rem;
+        }}
+        .bench-topline {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-bottom: .1rem;
+        }}
+        .bench-context-chip {{
+            display: inline-flex;
+            align-items: center;
+            gap: .4rem;
+            padding: .35rem .6rem;
+            border: 1px solid var(--bench-border);
+            border-radius: 999px;
+            color: var(--bench-muted);
+            background: var(--bench-raised);
+            font-size: .72rem;
+            white-space: nowrap;
+        }}
+        .bench-context-chip::before {{
+            content: '';
+            width: .42rem;
+            height: .42rem;
+            border-radius: 50%;
+            background: var(--bench-positive);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--bench-positive) 15%, transparent);
+        }}
+        .bench-page {{
+            position: relative;
+            overflow: hidden;
+            margin: .8rem 0 1rem;
+            padding: 1.2rem 1.3rem;
+            border: 1px solid var(--bench-border);
+            border-radius: 17px;
+            background: linear-gradient(
+                120deg,
+                var(--bench-raised),
+                color-mix(in srgb, var(--bench-accent-soft) 42%, var(--bench-raised))
+            );
+            box-shadow: 0 5px 24px color-mix(in srgb, var(--bench-shadow) 40%, transparent);
+        }}
+        .bench-page::after {{
+            content: '';
+            position: absolute;
+            width: 10rem;
+            height: 10rem;
+            right: -4rem;
+            top: -6rem;
+            border-radius: 50%;
+            background: color-mix(in srgb, var(--bench-primary) 12%, transparent);
+            pointer-events: none;
+        }}
+        .bench-page h2 {{
+            color: var(--bench-ink);
+            font-size: 1.5rem;
+            letter-spacing: -.03em;
+            margin: 0 0 .25rem;
+        }}
+        .bench-page p {{ color: var(--bench-muted); margin: 0; max-width: 82ch; }}
+        .bench-run-card {{
             padding: .9rem 1rem;
             border: 1px solid var(--bench-border);
-            border-left: 4px solid var(--bench-violet);
+            border-left: 4px solid var(--bench-primary);
             border-radius: 12px;
-            background: white;
+            background: var(--bench-raised);
             color: var(--bench-muted);
             margin: .25rem 0 .75rem;
-        }
-        .bench-run-card strong { color: var(--bench-ink); }
-        .bench-sim {
-            padding: .8rem 1rem;
-            border: 1px solid #fedf89;
-            border-radius: 12px;
-            background: #fffaeb;
-            color: #7a2e0e;
+            box-shadow: 0 4px 14px color-mix(in srgb, var(--bench-shadow) 35%, transparent);
+        }}
+        .bench-run-card strong {{ color: var(--bench-ink); }}
+        .bench-sim, .bench-measured {{
+            padding: .78rem .95rem;
+            border-radius: 11px;
             margin: .25rem 0 1rem;
-        }
-        .bench-measured {
-            padding: .8rem 1rem;
-            border: 1px solid #b2ddff;
-            border-radius: 12px;
-            background: #eff8ff;
-            color: #175cd3;
-            margin: .25rem 0 1rem;
-        }
-        .bench-section {
-            color: #475467;
-            font-size: .76rem;
-            font-weight: 750;
-            letter-spacing: .1em;
+        }}
+        .bench-sim {{
+            border: 1px solid color-mix(in srgb, var(--bench-warning) 42%, transparent);
+            background: color-mix(in srgb, var(--bench-warning) 10%, var(--bench-raised));
+            color: var(--bench-warning);
+        }}
+        .bench-measured {{
+            border: 1px solid color-mix(in srgb, var(--bench-info) 40%, transparent);
+            background: color-mix(in srgb, var(--bench-info) 9%, var(--bench-raised));
+            color: var(--bench-info);
+        }}
+        .bench-section {{
+            display: flex;
+            align-items: center;
+            gap: .5rem;
+            color: var(--bench-muted);
+            font-size: .7rem;
+            font-weight: 800;
+            letter-spacing: .12em;
             text-transform: uppercase;
-            margin: 1.2rem 0 .45rem;
-        }
-        button[kind="primary"] { border-radius: 10px; }
+            margin: 1.35rem 0 .5rem;
+        }}
+        .bench-section::before {{
+            content: '';
+            width: .38rem;
+            height: .38rem;
+            border-radius: 50%;
+            background: var(--bench-primary);
+        }}
+        [data-testid="stAlert"] {{
+            color: var(--bench-ink);
+            border-radius: 11px;
+        }}
+
+        @media (max-width: 900px) {{
+            [data-testid="stSidebar"], [data-testid="stSidebar"] > div:first-child {{
+                min-width: min(88vw, 336px) !important;
+                width: min(88vw, 336px) !important;
+            }}
+            [data-testid="stMainBlockContainer"] {{ padding: 1rem 1rem 3rem; }}
+            .bench-topline {{ align-items: flex-start; flex-direction: column; gap: .45rem; }}
+            .bench-page {{ padding: 1rem; }}
+            [role="tablist"] {{ width: 100%; overflow-x: auto; }}
+        }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -355,17 +799,16 @@ def _simulated_notice(st: Any, entries: Sequence[CatalogEntry]) -> None:
     if simulated:
         st.markdown(
             (
-                '<div class="bench-sim"><strong>Simulated preview data is visible.</strong> '
-                f"{simulated} run(s) are deterministic UI fixtures, not benchmark evidence. "
-                "They are excluded from the measured catalog export.</div>"
+                '<div class="bench-sim"><strong>Demo data</strong> · '
+                f"{simulated} simulated run(s) · excluded from measured exports</div>"
             ),
             unsafe_allow_html=True,
         )
     else:
         st.markdown(
             (
-                '<div class="bench-measured"><strong>Measured evidence only.</strong> '
-                "All visible runs come from the read-only filesystem catalog.</div>"
+                '<div class="bench-measured"><strong>Measured data</strong> · '
+                "read-only filesystem evidence</div>"
             ),
             unsafe_allow_html=True,
         )
@@ -385,49 +828,38 @@ def _filter_entries(
             {str(row[field]) for row in rows.values() if row.get(field) not in (None, "")}
         )
 
-    with st.sidebar.expander("Filters", expanded=True):
-        platforms = st.multiselect(
-            "Platform",
-            values("platform"),
-            default=values("platform"),
-            key=widget_key("filter_platform"),
+    def choose(label: str, field: str) -> list[str]:
+        options = values(field)
+        if not options:
+            return []
+        placeholders = {
+            "Platform": "All platforms",
+            "Benchmark type": "All benchmark types",
+            "Model": "All models",
+            "Memory system": "All memory systems",
+            "Status": "All statuses",
+            "Precision": "All precisions",
+            "Evidence source": "All evidence sources",
+        }
+        return st.multiselect(
+            label,
+            options,
+            default=[],
+            placeholder=placeholders[label],
+            key=widget_key(f"filter_{field}"),
         )
-        benchmark_types = st.multiselect(
-            "Benchmark type",
-            values("benchmark_type"),
-            default=values("benchmark_type"),
-            key=widget_key("filter_benchmark"),
-        )
-        models = st.multiselect(
-            "Model",
-            values("model_id"),
-            default=values("model_id"),
-            key=widget_key("filter_model"),
-        )
-        memory = st.multiselect(
-            "Memory system",
-            values("memory_type"),
-            default=values("memory_type"),
-            key=widget_key("filter_memory"),
-        )
-        statuses = st.multiselect(
-            "Status",
-            values("status"),
-            default=values("status"),
-            key=widget_key("filter_status"),
-        )
-        precision = st.multiselect(
-            "Precision",
-            values("precision"),
-            default=values("precision"),
-            key=widget_key("filter_precision"),
-        )
-        sources = st.multiselect(
-            "Evidence source",
-            values("source"),
-            default=values("source"),
-            key=widget_key("filter_source"),
-        )
+
+    with st.sidebar.expander("Scope", expanded=True):
+        st.caption("Choose the runs that feed every workspace view.")
+        platforms = choose("Platform", "platform")
+        benchmark_types = choose("Benchmark type", "benchmark_type")
+        models = choose("Model", "model_id")
+
+    with st.sidebar.expander("Advanced filters", expanded=False):
+        memory = choose("Memory system", "memory_type")
+        statuses = choose("Status", "status")
+        precision = choose("Precision", "precision")
+        sources = choose("Evidence source", "source")
         workload_query = (
             st.text_input(
                 "Workload contains",
@@ -437,7 +869,24 @@ def _filter_entries(
             .strip()
             .lower()
         )
-        st.caption("Clearing a filter means “all values” for that dimension.")
+        st.caption("An empty selection means all values in that dimension.")
+        if st.button(
+            "Reset all filters",
+            width="stretch",
+            key=widget_key("reset_filters"),
+        ):
+            for field in (
+                "platform",
+                "benchmark_type",
+                "model_id",
+                "memory_type",
+                "status",
+                "precision",
+                "source",
+                "workload",
+            ):
+                st.session_state.pop(widget_key(f"filter_{field}"), None)
+            st.rerun()
 
     selections = {
         "platform": set(platforms),
@@ -560,8 +1009,7 @@ def _render_overview(
         st,
         "Campaign pulse",
         "Benchmark overview",
-        "A high-level view of run health, platform coverage, performance trade-offs, "
-        "and metric completeness across the active dataset.",
+        "Runs, coverage, performance, and metric readiness.",
     )
     _simulated_notice(st, entries)
     if not entries:
@@ -611,7 +1059,7 @@ def _render_overview(
                 xref="paper",
                 yref="paper",
                 showarrow=False,
-                font={"size": 15, "color": "#667085"},
+                font={"size": 15, "color": _theme_tokens()["muted"]},
             )
             figure.update_xaxes(visible=False)
             figure.update_yaxes(visible=False)
@@ -620,9 +1068,7 @@ def _render_overview(
                 width="stretch",
                 theme=None,
             )
-            st.caption(
-                "The trade-off needs both metrics; unavailable latency is not treated as zero."
-            )
+            st.caption("Requires both latency and throughput.")
         else:
             size = "peak_memory_gib" if tradeoff["peak_memory_gib"].notna().any() else None
             figure = px.scatter(
@@ -634,7 +1080,7 @@ def _render_overview(
                 size=size,
                 size_max=34,
                 custom_data=["run_id", "model_scale", "memory_type", "workload", "source"],
-                color_discrete_map=PLATFORM_COLORS,
+                color_discrete_map=_platform_colors(),
                 title="Output throughput vs. mean end-to-end latency",
                 labels={
                     "mean_e2e_latency_ms": "Mean end-to-end latency (ms)",
@@ -658,10 +1104,7 @@ def _render_overview(
                 width="stretch",
                 theme=None,
             )
-            st.caption(
-                "Upper-left observations combine higher throughput with lower latency. "
-                "Bubble size represents peak memory when available."
-            )
+            st.caption("Upper-left is better · bubble size = peak memory.")
 
     with right:
         st.markdown('<div class="bench-section">Campaign coverage</div>', unsafe_allow_html=True)
@@ -682,7 +1125,7 @@ def _render_overview(
                 "runs": "Run count",
                 "benchmark_type": "Benchmark",
             },
-            color_discrete_sequence=["#7257E8", "#0E9F9A", "#E58B32"],
+            color_discrete_sequence=_categorical_colors()[:3],
         )
         st.plotly_chart(
             _apply_chart_style(figure, height=430),
@@ -719,9 +1162,9 @@ def _render_overview(
         figure = px.imshow(
             matrix,
             color_continuous_scale=[
-                [0.0, "#F2F4F7"],
-                [0.45, "#D9D6FE"],
-                [1.0, "#7257E8"],
+                [0.0, _theme_tokens()["surface_soft"]],
+                [0.45, _theme_tokens()["surface_accent"]],
+                [1.0, _theme_tokens()["primary"]],
             ],
             range_color=(0, 100),
             text_auto=".0f",
@@ -735,10 +1178,7 @@ def _render_overview(
             width="stretch",
             theme=None,
         )
-        st.caption(
-            "Completeness is shown explicitly so unavailable instrumentation is not mistaken "
-            "for a zero measurement."
-        )
+        st.caption("Blank means unavailable, not zero.")
 
     st.markdown('<div class="bench-section">Run catalog</div>', unsafe_allow_html=True)
     table = _catalog_table(pd, entries)
@@ -855,7 +1295,7 @@ def _render_repetitions(
         markers=True,
         title=f"{selected.label} across measured repetitions",
         labels={"Value": f"{selected.label} ({selected.unit})"},
-        color_discrete_sequence=["#7257E8"],
+        color_discrete_sequence=[_theme_tokens()["primary"]],
     )
     figure.update_traces(marker={"size": 10}, line={"width": 2.5})
     aggregate = _finite(entry.summary.get(selected.field))
@@ -864,7 +1304,7 @@ def _render_repetitions(
         figure.add_hline(
             y=aggregate,
             line_dash="dash",
-            line_color="#475467",
+            line_color=_theme_tokens()["muted"],
             annotation_text=label,
         )
     st.plotly_chart(
@@ -876,16 +1316,12 @@ def _render_repetitions(
     variability = repetition_variability(measurements, selected.field)
     if selected.aggregation == "mean" and variability:
         st.caption(
-            "Sample standard deviation: "
+            "SD "
             f"{variability['standard_deviation']:.4g} {selected.unit}; "
-            f"range {variability['minimum']:.4g}–{variability['maximum']:.4g}. "
-            "This is descriptive, not a confidence interval."
+            f"range {variability['minimum']:.4g}–{variability['maximum']:.4g}."
         )
     elif selected.aggregation in {"sum", "weighted"}:
-        st.caption(
-            "The run-level aggregate is not overlaid because totals and weighted metrics "
-            "are not directly comparable with a single repetition."
-        )
+        st.caption("Run aggregate omitted for non-mean metrics.")
 
     series = _load_entry_telemetry(st, entry, dataset, completed)
     telemetry_frame = pd.DataFrame(series)
@@ -930,11 +1366,11 @@ def _render_repetitions(
                 },
                 color_discrete_sequence=[
                     (
-                        "#7257E8"
+                        _theme_tokens()["gpu"]
                         if "gpu" in field
-                        else "#0E9F9A"
+                        else _theme_tokens()["hbm"]
                         if "cpu" in field
-                        else "#E58B32"
+                        else _theme_tokens()["ddr"]
                     )
                 ],
             )
@@ -953,7 +1389,7 @@ def _render_repetitions(
                 xref="paper",
                 yref="paper",
                 showarrow=False,
-                font={"size": 14, "color": "#667085"},
+                font={"size": 14, "color": _theme_tokens()["muted"]},
             )
             figure.update_xaxes(visible=False)
             figure.update_yaxes(visible=False)
@@ -965,15 +1401,9 @@ def _render_repetitions(
                 key=f"run_telemetry_slot_{index}",
             )
     if entry.summary.get("hardware_type") == "gpu":
-        st.caption(
-            "GPU utilization is averaged across visible devices; memory and power are summed "
-            "across the allocation."
-        )
+        st.caption("GPU utilization = mean · memory/power = allocation total.")
     else:
-        st.caption(
-            "CPU telemetry is shown only when the result records an applicable package/node "
-            "instrumentation boundary."
-        )
+        st.caption("CPU telemetry follows the recorded package/node scope.")
 
 
 def _status_renderer(st: Any, status: str) -> Any:
@@ -1024,8 +1454,7 @@ def _render_run_detail(
         st,
         "Run microscope",
         "Run detail",
-        "Inspect one run from headline outcomes down to repetitions, telemetry, "
-        "placement controls, warnings, and the complete normalized record.",
+        "Metrics, telemetry, controls, and evidence for one run.",
     )
     if not entries:
         st.info("No runs match the active filters.")
@@ -1052,15 +1481,9 @@ def _render_run_detail(
     _status_renderer(st, status)(f"Run status: {status}")
     _simulated_notice(st, [entry])
     if summary.get("benchmark_type") == "smoke":
-        st.info(
-            "This is a functional smoke test. Use offline or serving campaigns for formal "
-            "performance conclusions."
-        )
+        st.info("Smoke validation only.")
     else:
-        st.info(
-            "This is a measured performance workload. Interpret it only against runs with "
-            "matching workload, software, hardware, and placement controls."
-        )
+        st.info("Compare only runs with matching controls.")
 
     headline = _headline_specs(summary)
     if headline:
@@ -1272,7 +1695,7 @@ def _single_metric_explorer(
     }
     if dimension == "timestamp":
         frame[dimension_label] = pd.to_datetime(frame[dimension_label], errors="coerce")
-    color_map = PLATFORM_COLORS if color == "platform" else None
+    color_map = _platform_colors() if color == "platform" else None
     if numeric_axis or dimension == "timestamp":
         figure = px.scatter(
             frame,
@@ -1303,10 +1726,7 @@ def _single_metric_explorer(
         width="stretch",
         theme=None,
     )
-    st.caption(
-        "Every point is one run. This view is descriptive; use Compare or the memory-study "
-        "matched pairs before making directional claims."
-    )
+    st.caption("Each point is one run.")
     with st.expander("View plotted observations"):
         st.dataframe(frame, width="stretch", hide_index=True)
 
@@ -1381,7 +1801,7 @@ def _tradeoff_explorer(
         color="Platform",
         symbol="Model",
         custom_data=["Run", "Memory", "Workload", "Source"],
-        color_discrete_map=PLATFORM_COLORS,
+        color_discrete_map=_platform_colors(),
         title=f"{y_spec.label} vs. {x_spec.label}",
         labels={
             "X": f"{x_spec.label} ({x_spec.unit})",
@@ -1394,10 +1814,7 @@ def _tradeoff_explorer(
         width="stretch",
         theme=None,
     )
-    st.caption(
-        f"{x_spec.label}: {x_spec.direction}; {y_spec.label}: {y_spec.direction}. "
-        "Direction metadata is shown instead of collapsing unlike units into an overall score."
-    )
+    st.caption(f"X: {x_spec.direction} · Y: {y_spec.direction} · no composite score.")
 
 
 def _render_explorer(
@@ -1407,8 +1824,7 @@ def _render_explorer(
         st,
         "Analysis canvas",
         "Explorer",
-        "Slice one metric across a workload dimension or inspect a two-metric trade-off. "
-        "Raw observations remain visible and are never automatically ranked.",
+        "Slice a metric or inspect a two-metric trade-off.",
     )
     _simulated_notice(st, entries)
     if not entries:
@@ -1473,24 +1889,12 @@ def _matched_memory_pairs(
     ]
 
 
-def _render_memory_study(
+def _render_cpu_memory_study(
     st: Any, pd: Any, px: Any, entries: Sequence[CatalogEntry]
 ) -> None:
-    _page_header(
-        st,
-        "Future study",
-        "CPU memory study",
-        "A treatment-aware workspace for matched CPU DDR and HBM runs: bandwidth, "
-        "phase behavior, placement evidence, and direction-aware paired effects.",
-    )
     cpu_entries = [entry for entry in entries if entry.summary.get("hardware_type") == "cpu"]
-    _simulated_notice(st, cpu_entries)
     if not cpu_entries:
-        st.info(
-            "No CPU results are visible yet. The dashboard is ready for CPU summaries that "
-            "record memory type, placement controls, bandwidth, CPU resources, and shared "
-            "latency/throughput metrics."
-        )
+        st.info("No CPU memory results in the current scope.")
 
     pairs = _matched_memory_pairs(cpu_entries)
     memory_types = {
@@ -1543,7 +1947,7 @@ def _render_memory_study(
                 xref="paper",
                 yref="paper",
                 showarrow=False,
-                font={"size": 14, "color": "#667085"},
+                font={"size": 14, "color": _theme_tokens()["muted"]},
             )
             figure.update_xaxes(visible=False)
             figure.update_yaxes(visible=False)
@@ -1557,7 +1961,10 @@ def _render_memory_study(
                 size="peak_memory_gib",
                 size_max=28,
                 custom_data=["run_id", "workload", "numa_policy", "memory_binding", "source"],
-                color_discrete_map={"HBM2e": "#0E9F9A", "DDR5": "#E58B32"},
+                color_discrete_map={
+                    "HBM2e": _theme_tokens()["hbm"],
+                    "DDR5": _theme_tokens()["ddr"],
+                },
                 title="Achieved bandwidth vs. output throughput",
                 labels={
                     "measured_memory_bandwidth_gbps": "Measured memory bandwidth (GB/s)",
@@ -1608,7 +2015,10 @@ def _render_memory_study(
                 color="Memory",
                 facet_col="Model",
                 barmode="group",
-                color_discrete_map={"HBM2e": "#0E9F9A", "DDR5": "#E58B32"},
+                color_discrete_map={
+                    "HBM2e": _theme_tokens()["hbm"],
+                    "DDR5": _theme_tokens()["ddr"],
+                },
                 title="Phase-specific throughput",
                 labels={"Throughput": "Throughput (tokens/s)"},
             )
@@ -1628,7 +2038,7 @@ def _render_memory_study(
                 xref="paper",
                 yref="paper",
                 showarrow=False,
-                font={"size": 14, "color": "#667085"},
+                font={"size": 14, "color": _theme_tokens()["muted"]},
             )
             figure.update_xaxes(visible=False)
             figure.update_yaxes(visible=False)
@@ -1684,10 +2094,7 @@ def _render_memory_study(
         )
     pair_frame = pd.DataFrame(pair_rows)
     if pair_frame.empty:
-        st.info(
-            "No DDR/HBM pairs share the same model, backend, CPU, workload, precision, "
-            "threading, and NUMA controls."
-        )
+        st.info("No control-matched DDR/HBM pairs.")
         figure = px.bar(
             pd.DataFrame({"Pair": [], "HBM improvement": []}),
             x="HBM improvement",
@@ -1702,7 +2109,7 @@ def _render_memory_study(
             xref="paper",
             yref="paper",
             showarrow=False,
-            font={"size": 14, "color": "#667085"},
+            font={"size": 14, "color": _theme_tokens()["muted"]},
         )
         figure.update_xaxes(visible=False)
         figure.update_yaxes(visible=False)
@@ -1713,13 +2120,17 @@ def _render_memory_study(
             y="Pair",
             orientation="h",
             color="HBM improvement",
-            color_continuous_scale=["#F04438", "#F2F4F7", "#12B76A"],
+                color_continuous_scale=[
+                    _theme_tokens()["negative"],
+                    _theme_tokens()["surface_soft"],
+                    _theme_tokens()["positive"],
+                ],
             color_continuous_midpoint=0,
             custom_data=["DDR", "HBM", "Source"],
             title=f"Direction-aware HBM effect — {selected.label}",
             labels={"HBM improvement": "HBM improvement vs. DDR (%)"},
         )
-        figure.add_vline(x=0, line_color="#667085", line_width=1)
+        figure.add_vline(x=0, line_color=_theme_tokens()["muted"], line_width=1)
         figure.update_traces(
             hovertemplate=(
                 "<b>%{y}</b><br>Improvement: %{x:.1f}%<br>"
@@ -1734,11 +2145,7 @@ def _render_memory_study(
         theme=None,
         key="memory_secondary",
     )
-    st.caption(
-        "Positive means HBM moved the metric in its preferred direction. "
-        "Pairs match on the recorded model, CPU, backend, workload, precision, "
-        "threading, and NUMA controls; memory is the intended treatment."
-    )
+    st.caption("Positive = HBM moved in the preferred direction.")
 
     st.markdown('<div class="bench-section">Placement control matrix</div>', unsafe_allow_html=True)
     controls = []
@@ -1780,6 +2187,199 @@ def _render_memory_study(
         hide_index=True,
         key="memory_control_matrix",
     )
+
+
+def _platform_study_key(entry: CatalogEntry) -> tuple[Any, ...]:
+    summary = entry.summary
+    return (
+        summary.get("model_id"),
+        summary.get("benchmark_type"),
+        summary.get("dtype"),
+        summary.get("input_length"),
+        summary.get("output_length"),
+        summary.get("batch_size"),
+    )
+
+
+def _matched_platform_keys(entries: Sequence[CatalogEntry]) -> set[tuple[Any, ...]]:
+    grouped: dict[tuple[Any, ...], set[str]] = defaultdict(set)
+    for entry in entries:
+        if entry.summary.get("status") != "completed":
+            continue
+        hardware_type = str(entry.summary.get("hardware_type") or "").lower()
+        if hardware_type in {"gpu", "cpu"}:
+            grouped[_platform_study_key(entry)].add(hardware_type)
+    return {key for key, platforms in grouped.items() if platforms == {"gpu", "cpu"}}
+
+
+def _render_gpu_cpu_study(
+    st: Any, pd: Any, px: Any, entries: Sequence[CatalogEntry]
+) -> None:
+    study_entries = [
+        entry
+        for entry in entries
+        if entry.summary.get("status") == "completed"
+        and entry.summary.get("hardware_type") in {"gpu", "cpu"}
+    ]
+    gpu_entries = [
+        entry for entry in study_entries if entry.summary.get("hardware_type") == "gpu"
+    ]
+    cpu_entries = [
+        entry for entry in study_entries if entry.summary.get("hardware_type") == "cpu"
+    ]
+    matched_keys = _matched_platform_keys(study_entries)
+
+    columns = st.columns(4)
+    columns[0].metric("GPU runs", len(gpu_entries))
+    columns[1].metric("CPU runs", len(cpu_entries))
+    columns[2].metric("Aligned shapes", len(matched_keys))
+    columns[3].metric(
+        "Platforms",
+        len({hardware_platform(entry.summary) for entry in study_entries}),
+    )
+
+    if not gpu_entries or not cpu_entries:
+        st.info("GPU and CPU results are both required for this study.")
+        return
+
+    matched_only = st.toggle(
+        "Aligned shapes only",
+        value=bool(matched_keys),
+        help="Same model, benchmark, precision, input/output shape, and batch size.",
+        key="platform_study_matched_only",
+    )
+    plotted_entries = (
+        [entry for entry in study_entries if _platform_study_key(entry) in matched_keys]
+        if matched_only
+        else study_entries
+    )
+    frame = _analysis_frame(pd, plotted_entries)
+    shared_specs = [
+        spec
+        for spec in _available_specs(plotted_entries)
+        if spec.scope == "shared"
+        and any(_finite(entry.summary.get(spec.field)) is not None for entry in gpu_entries)
+        and any(_finite(entry.summary.get(spec.field)) is not None for entry in cpu_entries)
+    ]
+    selected = st.selectbox(
+        "Metric",
+        shared_specs,
+        index=_default_spec(shared_specs, "offline"),
+        format_func=lambda spec: spec.label,
+        key="platform_study_metric",
+    )
+
+    chart_frame = frame.dropna(subset=[selected.field]).copy()
+    chart_frame["Run"] = chart_frame.apply(
+        lambda row: (
+            f"{row['model_scale']} · {row['benchmark_type']} · "
+            f"{row['platform']} · in={row['input_length']}"
+        ),
+        axis=1,
+    )
+    figure = px.bar(
+        chart_frame,
+        x="Run",
+        y=selected.field,
+        color="platform",
+        barmode="group",
+        color_discrete_map=_platform_colors(),
+        title=f"{selected.label} · GPU vs CPU",
+        labels={selected.field: f"{selected.label} ({selected.unit})", "platform": "Platform"},
+        custom_data=["run_id", "workload", "source"],
+    )
+    figure.update_xaxes(tickangle=-24, title_text="")
+    figure.update_traces(
+        hovertemplate=(
+            "<b>%{x}</b><br>Value: %{y:.4g}<br>Run: %{customdata[0]}<br>"
+            "Workload: %{customdata[1]}<br>Source: %{customdata[2]}<extra></extra>"
+        )
+    )
+    st.plotly_chart(
+        _apply_chart_style(figure, height=430),
+        width="stretch",
+        theme=None,
+        key="platform_study_metric_chart",
+    )
+
+    left, right = st.columns(2)
+    with left:
+        tradeoff = frame.dropna(
+            subset=["mean_e2e_latency_ms", "output_throughput_tokens_per_second"]
+        )
+        figure = px.scatter(
+            tradeoff,
+            x="mean_e2e_latency_ms",
+            y="output_throughput_tokens_per_second",
+            color="platform",
+            symbol="model_scale",
+            color_discrete_map=_platform_colors(),
+            title="Latency vs throughput",
+            labels={
+                "mean_e2e_latency_ms": "Mean latency (ms)",
+                "output_throughput_tokens_per_second": "Output throughput (tokens/s)",
+                "platform": "Platform",
+                "model_scale": "Model",
+            },
+        )
+        st.plotly_chart(
+            _apply_chart_style(figure, height=390),
+            width="stretch",
+            theme=None,
+            key="platform_study_tradeoff",
+        )
+    with right:
+        memory_frame = frame.dropna(
+            subset=["peak_memory_gib", "output_throughput_tokens_per_second"]
+        )
+        figure = px.scatter(
+            memory_frame,
+            x="peak_memory_gib",
+            y="output_throughput_tokens_per_second",
+            color="platform",
+            symbol="model_scale",
+            color_discrete_map=_platform_colors(),
+            title="Memory footprint vs throughput",
+            labels={
+                "peak_memory_gib": "Peak memory (GiB)",
+                "output_throughput_tokens_per_second": "Output throughput (tokens/s)",
+                "platform": "Platform",
+                "model_scale": "Model",
+            },
+        )
+        st.plotly_chart(
+            _apply_chart_style(figure, height=390),
+            width="stretch",
+            theme=None,
+            key="platform_study_memory",
+        )
+
+
+def _render_memory_study(
+    st: Any, pd: Any, px: Any, entries: Sequence[CatalogEntry]
+) -> None:
+    _page_header(
+        st,
+        "Hardware lens",
+        "Memory & platform study",
+        "GPU vs CPU performance and CPU DDR vs HBM effects.",
+    )
+    _simulated_notice(st, entries)
+    mode = st.segmented_control(
+        "Study",
+        ("GPU vs CPU", "CPU DDR vs HBM"),
+        default="GPU vs CPU",
+        format_func=lambda value: (
+            f":material/{'developer_board' if value == 'GPU vs CPU' else 'memory'}: {value}"
+        ),
+        key="memory_study_mode",
+        label_visibility="collapsed",
+        width="stretch",
+    )
+    if mode == "CPU DDR vs HBM":
+        _render_cpu_memory_study(st, pd, px, entries)
+    else:
+        _render_gpu_cpu_study(st, pd, px, entries)
 
 
 def _get_dotted(data: Mapping[str, Any], field: str) -> Any:
@@ -1878,73 +2478,80 @@ def _memory_treatment_compatibility(
     return {"status": "compatible" if not evidence else "incompatible", "evidence": evidence}
 
 
-def _comparison_values(
-    left: Mapping[str, Any],
-    right: Mapping[str, Any],
-    *,
-    ratios_allowed: bool,
+def _comparison_compatibility(
+    baseline: CatalogEntry,
+    candidate: CatalogEntry,
+    lens: str,
+) -> dict[str, Any]:
+    if baseline.key == candidate.key:
+        return {
+            "status": "baseline",
+            "allowed": lens != "Absolute values",
+            "evidence": [],
+        }
+    if lens == "Absolute values":
+        return {"status": "descriptive", "allowed": False, "evidence": []}
+    if lens == "CPU memory treatment":
+        result = _memory_treatment_compatibility(
+            baseline.summary, candidate.summary
+        )
+        return {
+            "status": result["status"],
+            "allowed": result["status"] == "compatible",
+            "evidence": result["evidence"],
+        }
+
+    comparison = compare_summaries(baseline.summary, candidate.summary)
+    compatibility = comparison["compatibility"]
+    evidence = [
+        {"kind": "mismatch", **item}
+        for item in compatibility["mismatched_fields"]
+    ] + [
+        {"kind": "missing", **item}
+        for item in compatibility["missing_fields"]
+    ]
+    return {
+        "status": compatibility["status"],
+        "allowed": compatibility["status"] == "compatible",
+        "evidence": evidence,
+    }
+
+
+def _comparison_metric_rows(
+    entries: Sequence[CatalogEntry],
+    baseline: CatalogEntry,
+    compatibility: Mapping[str, Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     rows = []
     for spec in METRIC_SPECS:
-        left_value = _finite(left.get(spec.field))
-        right_value = _finite(right.get(spec.field))
-        if left_value is None and right_value is None:
-            continue
-        ratio = (
-            right_value / left_value
-            if ratios_allowed
-            and left_value not in (None, 0.0)
-            and right_value is not None
-            else None
-        )
-        preferred_change = None
-        if ratio is not None and spec.direction != "descriptive":
-            raw_change = (ratio - 1) * 100
-            preferred_change = raw_change if spec.direction == "higher" else -raw_change
-        rows.append(
-            {
-                "Category": spec.category,
-                "Metric": spec.label,
-                "Unit": spec.unit,
-                "Left": left_value,
-                "Right": right_value,
-                "Right / left": ratio,
-                "Preferred change (%)": preferred_change,
-                "Aggregation": spec.aggregation,
-                "Direction": spec.direction,
-            }
-        )
-    return rows
-
-
-def _comparison_plot_rows(
-    left: CatalogEntry,
-    right: CatalogEntry,
-    left_measurements: Mapping[str, Any],
-    right_measurements: Mapping[str, Any],
-) -> list[dict[str, Any]]:
-    rows = []
-    for spec in METRIC_SPECS:
-        for side, entry, measurements in (
-            ("Left", left, left_measurements),
-            ("Right", right, right_measurements),
-        ):
+        baseline_value = _finite(baseline.summary.get(spec.field))
+        for entry in entries:
             value = _finite(entry.summary.get(spec.field))
             if value is None:
                 continue
-            variability = (
-                repetition_variability(measurements, spec.field)
-                if spec.aggregation == "mean"
+            allowed = bool(compatibility[entry.key]["allowed"])
+            ratio = (
+                value / baseline_value
+                if allowed and baseline_value not in (None, 0.0)
                 else None
             )
+            preferred_change = None
+            if ratio is not None and spec.direction != "descriptive":
+                raw_change = (ratio - 1) * 100
+                preferred_change = (
+                    raw_change if spec.direction == "higher" else -raw_change
+                )
             rows.append(
                 {
-                    "category": spec.category,
-                    "unit": spec.unit,
-                    "metric": spec.label,
-                    "side": side,
-                    "value": value,
-                    "error": variability["standard_deviation"] if variability else 0.0,
+                    "Category": spec.category,
+                    "Metric": spec.label,
+                    "Unit": spec.unit,
+                    "Run": entry.summary.get("run_id"),
+                    "Platform": hardware_platform(entry.summary),
+                    "Value": value,
+                    "Ratio vs baseline": ratio,
+                    "Preferred change (%)": preferred_change,
+                    "Compatibility": compatibility[entry.key]["status"],
                 }
             )
     return rows
@@ -1959,238 +2566,253 @@ def _render_compare(
 ) -> None:
     _page_header(
         st,
-        "Controlled contrast",
-        "Compare explicit runs",
-        "Compare two named runs with an explicit analytical lens. Ratios appear only when "
-        "the applicable controls are established; absolute observations always remain visible.",
+        "Multi-run contrast",
+        "Compare runs",
+        "Select 2–6 runs, choose a baseline, and visualize one metric.",
     )
     if len(entries) < 2:
-        st.info("At least two visible runs are required. Adjust the filters if necessary.")
+        st.info("At least two runs are required.")
         return
-    columns = st.columns(2)
-    left = columns[0].selectbox(
-        "Left run", entries, format_func=_entry_label, key="left_run"
+
+    namespace = hashlib.sha1(
+        "|".join(entry.key for entry in entries).encode("utf-8")
+    ).hexdigest()[:8]
+    selected = st.multiselect(
+        "Runs",
+        entries,
+        default=list(entries[: min(3, len(entries))]),
+        max_selections=min(6, len(entries)),
+        format_func=_entry_label,
+        key=f"comparison_runs_{namespace}",
+        placeholder="Choose 2–6 runs",
     )
-    right = columns[1].selectbox(
-        "Right run", entries, index=1, format_func=_entry_label, key="right_run"
-    )
-    if left.key == right.key:
-        st.warning("Choose two distinct result records.")
+    if len(selected) < 2:
+        st.warning("Select at least two runs.")
         return
-    _simulated_notice(st, [left, right])
+    _simulated_notice(st, selected)
 
-    cards = st.columns(2)
-    for column, label, entry in (
-        (cards[0], "LEFT", left),
-        (cards[1], "RIGHT", right),
-    ):
-        summary = entry.summary
-        column.markdown(
-            (
-                '<div class="bench-run-card">'
-                f'<div class="bench-kicker">{label}</div>'
-                f"<strong>{_short_model(summary)} · {summary.get('benchmark_type')}</strong><br>"
-                f"{hardware_platform(summary)} · {hardware_name(summary)} · "
-                f"{memory_system(summary)}<br>{summary.get('run_id')}</div>"
-            ),
-            unsafe_allow_html=True,
-        )
-
-    lens = st.selectbox(
-        "Comparison lens",
-        (
-            "Like-for-like (formal)",
-            "Memory-system treatment (CPU)",
-            "Descriptive only",
-        ),
-        help=(
-            "The treatment lens allows DDR/HBM to differ intentionally while requiring the "
-            "model, CPU, backend, workload, precision, threading, and NUMA controls to match."
-        ),
+    controls = st.columns(2)
+    lens = controls[0].selectbox(
+        "Lens",
+        ("Absolute values", "Like-for-like", "CPU memory treatment"),
         key="comparison_lens",
     )
-    comparison = compare_summaries(left.summary, right.summary)
-    evidence: list[dict[str, Any]]
-    if lens == "Like-for-like (formal)":
-        compatibility = comparison["compatibility"]
-        status = compatibility["status"]
-        evidence = [
-            {"kind": "mismatch", **item}
-            for item in compatibility["mismatched_fields"]
-        ] + [
-            {"kind": "missing", **item}
-            for item in compatibility["missing_fields"]
-        ]
-        ratios_allowed = status == "compatible"
-    elif lens == "Memory-system treatment (CPU)":
-        treatment = _memory_treatment_compatibility(left.summary, right.summary)
-        status = treatment["status"]
-        evidence = [{"kind": "control", **item} for item in treatment["evidence"]]
-        ratios_allowed = status == "compatible"
-    else:
-        status = "descriptive"
-        evidence = []
-        ratios_allowed = False
-
-    renderer = {
-        "compatible": st.success,
-        "partial": st.warning,
-        "descriptive": st.info,
-    }.get(status, st.error)
-    messages = {
-        "compatible": "Compatibility established for the selected lens; ratios are enabled.",
-        "partial": "Compatibility is partial; ratios remain suppressed.",
-        "incompatible": "Controls differ for the selected lens; ratios remain suppressed.",
-        "descriptive": "Descriptive lens selected; only absolute observations are shown.",
-    }
-    renderer(messages.get(status, f"Compatibility: {status}"))
-    if evidence:
-        with st.expander(f"Compatibility evidence ({len(evidence)})", expanded=False):
-            evidence_rows = [
-                {
-                    **item,
-                    "left": repr(item.get("left")),
-                    "right": repr(item.get("right")),
-                }
-                for item in evidence
-            ]
-            st.dataframe(pd.DataFrame(evidence_rows), width="stretch", hide_index=True)
-
-    left_measurements, left_legacy = measurements_for_entry(dataset, left)
-    right_measurements, right_legacy = measurements_for_entry(dataset, right)
-    if left_legacy or right_legacy:
-        st.warning(
-            "One or both runs lack measurements.json; repetition values were derived in memory "
-            "from preserved legacy files."
-        )
-
-    st.markdown('<div class="bench-section">Interpretation</div>', unsafe_allow_html=True)
-    if lens == "Like-for-like (formal)":
-        for statement in comparison_narrative(
-            comparison,
-            left.summary,
-            right.summary,
-            left_measurements=left_measurements,
-            right_measurements=right_measurements,
-        ):
-            st.write(f"- {statement}")
-    elif lens == "Memory-system treatment (CPU)":
-        if ratios_allowed:
-            st.write(
-                "- The recorded CPU, model, backend, workload, precision, threading, and "
-                "NUMA controls match; memory system is the declared treatment."
-            )
-        else:
-            st.write(
-                "- The recorded controls do not establish a clean memory-system treatment pair."
-            )
-        st.write(
-            "- Effects remain descriptive observations; no statistical significance or "
-            "model-answer quality is inferred."
-        )
-    else:
-        st.write(
-            "- Absolute values describe each run in its own recorded conditions. No fair-pair "
-            "claim, directional ratio, statistical significance, or quality inference is made."
-        )
-
-    metric_rows = _comparison_values(
-        left.summary, right.summary, ratios_allowed=ratios_allowed
+    baseline = controls[1].selectbox(
+        "Baseline",
+        selected,
+        format_func=_entry_label,
+        key=f"comparison_baseline_{namespace}",
     )
+    compatibility = {
+        entry.key: _comparison_compatibility(baseline, entry, lens)
+        for entry in selected
+    }
+    comparable = sum(
+        item["allowed"]
+        for key, item in compatibility.items()
+        if key != baseline.key
+    )
+    available_specs = _available_specs(selected)
+    platforms = {hardware_platform(entry.summary) for entry in selected}
+    columns = st.columns(4)
+    columns[0].metric("Runs", len(selected))
+    columns[1].metric("Platforms", len(platforms))
+    columns[2].metric("Metrics", len(available_specs))
+    columns[3].metric("Comparable", comparable if lens != "Absolute values" else "—")
+
+    if lens != "Absolute values":
+        status_rows = [
+            {
+                "Run": entry.summary.get("run_id"),
+                "Platform": hardware_platform(entry.summary),
+                "Status": compatibility[entry.key]["status"],
+                "Issues": len(compatibility[entry.key]["evidence"]),
+            }
+            for entry in selected
+        ]
+        st.dataframe(
+            pd.DataFrame(status_rows),
+            width="stretch",
+            hide_index=True,
+            key="comparison_compatibility_matrix",
+        )
+
+    if not available_specs:
+        st.info("No shared numeric metrics are available.")
+        return
+    categories = list(dict.fromkeys(spec.category for spec in available_specs))
+    preferred_field = (
+        "request_throughput_requests_per_second"
+        if baseline.summary.get("benchmark_type") == "serving"
+        else "output_throughput_tokens_per_second"
+    )
+    preferred_spec = next(
+        (item for item in available_specs if item.field == preferred_field),
+        available_specs[0],
+    )
+    metric_controls = st.columns(2)
+    category = metric_controls[0].selectbox(
+        "Metric family",
+        categories,
+        index=categories.index(preferred_spec.category),
+        key="comparison_metric_category",
+    )
+    category_specs = [spec for spec in available_specs if spec.category == category]
+    spec = metric_controls[1].selectbox(
+        "Metric",
+        category_specs,
+        index=_default_spec(category_specs, str(baseline.summary.get("benchmark_type"))),
+        format_func=lambda item: item.label,
+        key="comparison_metric",
+    )
+
+    plot_rows = []
+    legacy_runs = 0
+    for entry in selected:
+        value = _finite(entry.summary.get(spec.field))
+        if value is None:
+            continue
+        measurements, legacy = measurements_for_entry(dataset, entry)
+        legacy_runs += int(legacy)
+        variability = (
+            repetition_variability(measurements, spec.field)
+            if spec.aggregation == "mean"
+            else None
+        )
+        plot_rows.append(
+            {
+                "Run": (
+                    f"{_short_model(entry.summary)} · "
+                    f"{entry.summary.get('benchmark_type')} · "
+                    f"{hardware_platform(entry.summary)} · "
+                    f"in={entry.summary.get('input_length')}"
+                ),
+                "Platform": hardware_platform(entry.summary),
+                "Value": value,
+                "Error": variability["standard_deviation"] if variability else 0.0,
+                "Run ID": entry.summary.get("run_id"),
+                "Baseline": entry.key == baseline.key,
+            }
+        )
+    plot_frame = pd.DataFrame(plot_rows)
+    if plot_frame.empty:
+        st.info("The selected runs do not contain this metric.")
+        return
+
+    figure = px.bar(
+        plot_frame.sort_values("Value"),
+        x="Value",
+        y="Run",
+        color="Platform",
+        error_x="Error",
+        orientation="h",
+        color_discrete_map=_platform_colors(),
+        title=spec.label,
+        labels={"Value": f"{spec.label} ({spec.unit})"},
+        custom_data=["Run ID", "Baseline"],
+    )
+    figure.update_traces(
+        hovertemplate=(
+            "<b>%{y}</b><br>Value: %{x:.4g}<br>Run: %{customdata[0]}"
+            "<br>Baseline: %{customdata[1]}<extra></extra>"
+        )
+    )
+    st.plotly_chart(
+        _apply_chart_style(figure, height=max(340, 58 * len(plot_rows))),
+        width="stretch",
+        theme=None,
+        key="comparison_metric_chart",
+    )
+    if legacy_runs:
+        st.caption(f"{legacy_runs} run(s) use derived repetition data.")
+
+    baseline_value = _finite(baseline.summary.get(spec.field))
+    change_rows = []
+    if spec.direction != "descriptive" and baseline_value not in (None, 0.0):
+        for entry in selected:
+            if entry.key == baseline.key or not compatibility[entry.key]["allowed"]:
+                continue
+            value = _finite(entry.summary.get(spec.field))
+            if value is None:
+                continue
+            raw_change = (value / baseline_value - 1) * 100
+            change_rows.append(
+                {
+                    "Run": f"{_short_model(entry.summary)} · {hardware_platform(entry.summary)}",
+                    "Preferred change": (
+                        raw_change if spec.direction == "higher" else -raw_change
+                    ),
+                    "Platform": hardware_platform(entry.summary),
+                }
+            )
+    if change_rows:
+        change_frame = pd.DataFrame(change_rows)
+        figure = px.bar(
+            change_frame,
+            x="Preferred change",
+            y="Run",
+            color="Platform",
+            orientation="h",
+            color_discrete_map=_platform_colors(),
+            title="Change vs baseline",
+            labels={"Preferred change": "Preferred-direction change (%)"},
+        )
+        figure.add_vline(x=0, line_color=_theme_tokens()["muted"], line_width=1)
+        st.plotly_chart(
+            _apply_chart_style(figure, height=max(300, 54 * len(change_rows))),
+            width="stretch",
+            theme=None,
+            key="comparison_change_chart",
+        )
+
+    evidence_rows = []
+    for entry in selected:
+        for item in compatibility[entry.key]["evidence"]:
+            evidence_rows.append(
+                {
+                    "Run": entry.summary.get("run_id"),
+                    "Field": item.get("field"),
+                    "Baseline": repr(item.get("left")),
+                    "Candidate": repr(item.get("right")),
+                    "Reason": item.get("reason"),
+                }
+            )
+    metric_rows = _comparison_metric_rows(selected, baseline, compatibility)
     metric_frame = pd.DataFrame(metric_rows)
-    st.markdown('<div class="bench-section">Metric ledger</div>', unsafe_allow_html=True)
-    if metric_frame.empty:
-        st.info("Neither run contains recognized numeric metrics.")
-    else:
+    with st.expander("Data & compatibility", expanded=False):
+        if evidence_rows:
+            st.dataframe(pd.DataFrame(evidence_rows), width="stretch", hide_index=True)
         st.dataframe(metric_frame, width="stretch", hide_index=True)
 
-    plot_rows = _comparison_plot_rows(
-        left, right, left_measurements, right_measurements
+    export = {
+        "comparison_lens": lens,
+        "baseline_run_id": baseline.summary.get("run_id"),
+        "selected_run_ids": [entry.summary.get("run_id") for entry in selected],
+        "compatibility": compatibility,
+        "metrics": metric_rows,
+    }
+    download_columns = st.columns(2)
+    download_columns[0].download_button(
+        "JSON",
+        (json.dumps(export, indent=2, sort_keys=True, allow_nan=False) + "\n").encode(
+            "utf-8"
+        ),
+        file_name="dashboard_comparison.json",
+        mime="application/json",
+        key="comparison_json",
+        icon=":material/download:",
     )
-    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-    for row in plot_rows:
-        grouped[(row["category"], row["unit"])].append(row)
-    if grouped:
-        st.markdown(
-            '<div class="bench-section">Absolute metric panels</div>',
-            unsafe_allow_html=True,
-        )
-        for (category, unit), rows in grouped.items():
-            frame = pd.DataFrame(rows)
-            figure = px.bar(
-                frame,
-                x="metric",
-                y="value",
-                color="side",
-                error_y="error",
-                barmode="group",
-                title=f"{category} ({unit})",
-                labels={"value": f"Value ({unit})", "metric": "", "side": "Run"},
-                color_discrete_map={"Left": "#7257E8", "Right": "#0E9F9A"},
-            )
-            st.plotly_chart(
-                _apply_chart_style(figure, height=360),
-                width="stretch",
-                theme=None,
-            )
-        st.caption(
-            "Error bars show one descriptive sample standard deviation only for mean-aggregated "
-            "metrics with at least two observations."
-        )
-
-    if ratios_allowed and not metric_frame.empty:
-        changes = metric_frame.dropna(subset=["Preferred change (%)"])
-        if not changes.empty:
-            figure = px.bar(
-                changes,
-                x="Preferred change (%)",
-                y="Metric",
-                color="Category",
-                orientation="h",
-                title="Direction-aware change from left to right",
-                labels={"Preferred change (%)": "Preferred-direction change (%)"},
-            )
-            figure.add_vline(x=0, line_color="#667085", line_width=1)
-            st.plotly_chart(
-                _apply_chart_style(figure, height=max(360, 30 * len(changes))),
-                width="stretch",
-                theme=None,
-            )
-            st.caption(
-                "Positive means the right run moved in the metric's preferred direction. "
-                "Descriptive metrics are omitted and unlike units are never combined."
-            )
-
-    if not metric_frame.empty:
-        export = {
-            "comparison_lens": lens,
-            "ratios_allowed": ratios_allowed,
-            "left_run_id": left.summary.get("run_id"),
-            "right_run_id": right.summary.get("run_id"),
-            "compatibility_status": status,
-            "compatibility_evidence": evidence,
-            "metrics": metric_rows,
-        }
-        download_columns = st.columns(2)
-        download_columns[0].download_button(
-            "Download visible comparison JSON",
-            (json.dumps(export, indent=2, sort_keys=True, allow_nan=False) + "\n").encode(
-                "utf-8"
-            ),
-            file_name="dashboard_comparison.json",
-            mime="application/json",
-            key="comparison_json",
-        )
-        download_columns[1].download_button(
-            "Download visible comparison CSV",
-            metric_frame.to_csv(index=False).encode("utf-8"),
-            file_name="dashboard_comparison.csv",
-            mime="text/csv",
-            key="comparison_csv",
-        )
+    download_columns[1].download_button(
+        "CSV",
+        metric_frame.to_csv(index=False).encode("utf-8"),
+        file_name="dashboard_comparison.csv",
+        mime="text/csv",
+        key="comparison_csv",
+        icon=":material/download:",
+    )
 
 
-def run_dashboard(results_root: str | Path) -> None:
+def run_dashboard(results_root: str | Path | None = None) -> None:
     """Render the dashboard; optional dependencies are imported only when launched."""
 
     import pandas as pd
@@ -2203,23 +2825,61 @@ def run_dashboard(results_root: str | Path) -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
-    _inject_styles(st)
-    st.markdown(
-        '<div class="bench-kicker">Inference systems observatory</div>',
+    resolved_root = (
+        Path(results_root).expanduser().resolve() if results_root is not None else None
+    )
+
+    st.sidebar.markdown(
+        (
+            '<div class="bench-brand">'
+            '<div class="bench-brand-mark">◈</div>'
+            '<div class="bench-brand-copy"><strong>Benchmark Studio</strong>'
+            '<span>GPU · CPU · HBM</span></div></div>'
+        ),
         unsafe_allow_html=True,
     )
-    st.title("LLM inference benchmark results")
-    resolved_root = Path(results_root).expanduser().resolve()
-    st.caption(f"Read-only results root · {resolved_root}")
+    st.sidebar.markdown(
+        '<div class="bench-sidebar-label">Appearance</div>',
+        unsafe_allow_html=True,
+    )
+    appearance = st.sidebar.segmented_control(
+        "Appearance",
+        ("Light", "Dark"),
+        default="Light",
+        format_func=lambda value: (
+            f":material/{'light_mode' if value == 'Light' else 'dark_mode'}: {value}"
+        ),
+        key="ui_theme",
+        label_visibility="collapsed",
+        width="stretch",
+    )
+    theme = str(appearance or "Light").lower()
+    _ACTIVE_THEME.set(theme)
+    _inject_styles(st, theme)
 
     @st.cache_data(show_spinner=False)
     def cached_catalog(root: str) -> ResultCatalog:
         return discover_results(root)
 
-    measured = dataset_from_catalog(cached_catalog(str(resolved_root)))
+    measured_catalog = (
+        cached_catalog(str(resolved_root))
+        if resolved_root is not None
+        else ResultCatalog(Path.cwd(), (), ())
+    )
+    measured = dataset_from_catalog(measured_catalog)
     demo = simulated_dataset()
-    source_options = ("Measured results", "Demo study", "Measured + demo")
-    default_source = "Measured results" if measured.catalog.entries else "Demo study"
+    source_options = (
+        ("Measured results", "Demo study", "Measured + demo")
+        if resolved_root is not None
+        else ("Demo study",)
+    )
+    default_source = (
+        "Measured results" if measured.catalog.entries else "Demo study"
+    )
+    st.sidebar.markdown(
+        '<div class="bench-sidebar-label">Dataset</div>',
+        unsafe_allow_html=True,
+    )
     source = st.sidebar.selectbox(
         "Data source",
         source_options,
@@ -2234,23 +2894,73 @@ def run_dashboard(results_root: str | Path) -> None:
     else:
         dataset = measured
 
-    if st.sidebar.button("Refresh measured catalog", width="stretch", key="refresh_catalog"):
-        st.cache_data.clear()
-        st.rerun()
-    page = st.sidebar.radio(
-        "View",
-        ("Overview", "Run detail", "Explorer", "CPU memory study", "Compare"),
-        key="page",
+    if resolved_root is not None:
+        if st.sidebar.button(
+            "Refresh results", width="stretch", key="refresh_catalog", icon=":material/refresh:"
+        ):
+            st.cache_data.clear()
+            st.rerun()
+    st.sidebar.markdown(
+        '<div class="bench-sidebar-label">Workspace</div>',
+        unsafe_allow_html=True,
     )
+    page = st.sidebar.radio(
+        "Workspace view",
+        tuple(_VIEW_META),
+        format_func=lambda value: f":material/{_VIEW_META[value][0]}: {value}",
+        key="page",
+        label_visibility="collapsed",
+    )
+    st.sidebar.caption(_VIEW_META[page][1])
     filter_namespace = hashlib.sha1(source.encode("utf-8")).hexdigest()[:8]
+    st.sidebar.markdown(
+        '<div class="bench-sidebar-label">Filters</div>',
+        unsafe_allow_html=True,
+    )
     entries = _filter_entries(st, dataset, namespace=filter_namespace)
-    st.sidebar.caption(f"{len(entries)} of {len(dataset.catalog.entries)} runs visible")
+    simulated_visible = sum(
+        bool(entry.summary.get("is_simulated")) for entry in entries
+    )
+    evidence_label = (
+        "simulated preview"
+        if entries and simulated_visible == len(entries)
+        else "mixed evidence"
+        if simulated_visible
+        else "measured evidence"
+    )
+    st.sidebar.markdown(
+        (
+            '<div class="bench-sidebar-summary">'
+            '<span>Visible runs</span>'
+            f'<strong>{len(entries)} / {len(dataset.catalog.entries)}</strong>'
+            '<span>Evidence mode</span>'
+            f'<strong class="bench-live">{html.escape(evidence_label)}</strong>'
+            '</div>'
+        ),
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        (
+            '<div class="bench-topline">'
+            '<div class="bench-kicker">Inference systems observatory</div>'
+            f'<div class="bench-context-chip">{html.escape(source)}</div>'
+            '</div>'
+        ),
+        unsafe_allow_html=True,
+    )
+    st.title("LLM benchmark studio")
+    st.caption(
+        f"Results · {resolved_root}"
+        if resolved_root is not None
+        else "In-memory demo · no results directory selected"
+    )
 
     page_keys = {
         "Overview": "overview",
         "Run detail": "run_detail",
         "Explorer": "explorer",
-        "CPU memory study": "cpu_memory_study",
+        "Memory study": "memory_study",
         "Compare": "compare",
     }
     hidden_rules = "\n".join(
@@ -2266,7 +2976,7 @@ def run_dashboard(results_root: str | Path) -> None:
         _render_run_detail(st, pd, px, entries, dataset)
     with st.container(key="dashboard_page_explorer"):
         _render_explorer(st, pd, px, entries)
-    with st.container(key="dashboard_page_cpu_memory_study"):
+    with st.container(key="dashboard_page_memory_study"):
         _render_memory_study(st, pd, px, entries)
     with st.container(key="dashboard_page_compare"):
         _render_compare(st, pd, px, entries, dataset)
@@ -2274,7 +2984,7 @@ def run_dashboard(results_root: str | Path) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Read-only benchmark results dashboard")
-    parser.add_argument("--results-root", type=Path, required=True)
+    parser.add_argument("--results-root", type=Path)
     args, _ = parser.parse_known_args(argv)
     run_dashboard(args.results_root)
     return 0
