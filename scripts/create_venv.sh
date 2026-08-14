@@ -60,7 +60,6 @@ python -m pip install -e "${install_target}"
     python -m pip freeze
 } > "${VENV_PATH}/setup_versions.txt"
 
-printf '\nThe project is installed. vLLM is intentionally not installed or pinned by this script.\n'
-printf 'Inspect the detected Python, NVIDIA driver, and CUDA environment, then follow the\n'
-printf 'current official vLLM installation documentation for a compatible build.\n'
-printf 'After installing vLLM, run scripts/preflight_check.sh inside a GPU allocation.\n'
+printf '\nThe benchmark runner is installed. Backend runtimes remain independently managed.\n'
+printf 'Configure native vLLM/llama.cpp paths or pinned Docker/Apptainer images, then run\n'
+printf 'scripts/preflight_check.sh with a model, workload, profile, provider, and variant.\n'
