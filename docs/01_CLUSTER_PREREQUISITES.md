@@ -122,7 +122,7 @@ command -v nvcc && nvcc --version
 command -v nvidia-smi && nvidia-smi
 ```
 
-The CUDA toolkit reported by `nvcc`, the maximum CUDA capability reported by the driver, and the CUDA runtime bundled with a Python package are related but not interchangeable. Capture what is present; do not choose a PyTorch/CUDA/vLLM combination yet. Compatibility must be checked against the current official vLLM installation documentation during setup.
+The CUDA toolkit reported by `nvcc`, the maximum CUDA capability reported by the driver, and the CUDA runtime bundled with a Python package are related but not interchangeable. Capture what is present before selecting a vLLM or CUDA-enabled llama.cpp build. Check compatibility against the current upstream documentation during setup.
 
 Login nodes may not expose a GPU or `nvidia-smi`. Repeat GPU and driver checks inside a real GPU allocation before concluding that NVIDIA support is unavailable.
 
@@ -181,7 +181,9 @@ Fill it only with verified values for:
 - `VENV_PATH`
 - `HF_HOME`
 - `MODEL_CACHE_DIR`
+- `MODEL_ARTIFACT_ROOT`
 - `RESULTS_ROOT`
+- native backend executable/converter paths or pinned Docker/Apptainer images
 - `SLURM_PARTITION`
 - `SLURM_ACCOUNT`
 - `SLURM_QOS`
@@ -190,6 +192,6 @@ Fill it only with verified values for:
 
 `BENCH_REPO_ROOT` is the absolute path to this checkout as seen by compute nodes. It is required because Slurm may copy the submitted job script to a spool directory, from which the repository cannot be inferred. Record the site's complete one-GPU request syntax in `SLURM_GPU_REQUEST`, but continue to pass the site-approved option explicitly to `srun`/`sbatch`; the provided job files do not invent or embed a resource request.
 
-Keep placeholders until each value is known. Do not store `HF_TOKEN`, passwords, private keys, or other secrets in this file. Before continuing, verify that `HF_HOME` and `MODEL_CACHE_DIR` are outside the repository and visible from compute nodes. `RESULTS_ROOT` may be an external path or the checkout's ignored `results/` directory; never commit generated runs.
+Keep placeholders until each value is known. Do not store `HF_TOKEN`, passwords, private keys, or other secrets in this file. Before continuing, verify that `HF_HOME`, `MODEL_CACHE_DIR`, and `MODEL_ARTIFACT_ROOT` are outside the repository and visible from compute nodes. `RESULTS_ROOT` may be an external path or the checkout's ignored `results/` directory; never commit generated runs.
 
 Continue with [02 — Environment and model setup](02_ENVIRONMENT_AND_MODEL_SETUP.md).

@@ -1,116 +1,153 @@
-# LLM inference benchmark for the Sapienza HPC cluster
+# Modular LLM inference benchmark
 
-This repository is a small, reproducible starting point for learning how to deploy and benchmark Large Language Model inference with Slurm and NVIDIA GPUs. The first backend is [vLLM](https://docs.vllm.ai/), and the initial study gives equal treatment to:
+This repository benchmarks the same Llama models and workloads through either
+[vLLM](https://docs.vllm.ai/) or [llama.cpp](https://github.com/ggml-org/llama.cpp).
+It is designed for Linux/Slurm, but native and Docker execution also work on a local host.
 
-- `meta-llama/Llama-3.1-8B-Instruct`
+The shipped models are:
+
 - `meta-llama/Llama-3.2-1B-Instruct`
+- `meta-llama/Llama-3.1-8B-Instruct`
 
-The 1B model is useful both as a lower-resource environment check and as a genuine comparison target. Matching workloads for both models expose how model scale changes loading time, memory demand, latency, throughput, GPU utilization, and—where telemetry supports it—power and energy. These are inference-system measurements, not model-quality scores.
+The benchmark measures inference-system behavior, not model quality. It is not an official
+MLPerf implementation or submission.
 
-The longer-term MSc thesis objective is to compare ordinary CPU memory with CPU High Bandwidth Memory (HBM). Sapienza does not provide CPU HBM for this initial work, so the experiment and result formats are hardware-neutral even though this first phase establishes a single-GPU baseline.
+## Architecture
 
-> This repository is not MLPerf compliant, and its results must not be described as an official MLPerf submission. MLCommons/MLPerf integration is only a possible later phase.
+Experiments are composed at the CLI instead of being copied into backend-specific files:
 
-## Repository map
+- `configs/models/` defines canonical Hugging Face identity, tokenizer, revision policy, and
+  backend artifact variants.
+- `configs/workloads/` defines smoke, offline, and serving request shapes and controls.
+- `configs/profiles/` defines vLLM GPU and llama.cpp CPU/CUDA placement.
+- `--provider` selects `native`, `docker`, or `apptainer` without changing the other three inputs.
 
-- `configs/cluster/`: one documented example for site-specific settings; copy it locally and fill in values discovered on the cluster.
-- `configs/experiments/`: matching smoke, offline, and serving configurations for both models.
-- `scripts/`: environment checks, model download, benchmark launchers, telemetry, metadata collection, and comparison.
-- `slurm/`: portable one-GPU Slurm entry points.
-- `src/llm_bench/`: small configuration, metadata, and result-normalization package.
-- `results/`: the permitted in-checkout location for ignored run output; only `.gitkeep` is tracked. Model caches and weights must still be outside the checkout.
-- `docs/`: the complete workflow and future CPU-HBM roadmap.
+`f16` is available to both backends. `q8_0` and `q4_k_m` are explicit llama.cpp-only variants.
+Changing a model or a workload is therefore config-only; adding a backend or workload method is a
+single registered Python implementation rather than a change to the CLI, Slurm entry point, result
+writer, and dashboard.
 
-## Shortest path to both smoke tests
+Smoke and serving use the repository's asynchronous OpenAI-compatible streaming client. Offline
+runs deliberately retain the native tools: `vllm bench throughput` and `llama-bench`. Their
+measurement scopes differ, so cross-backend offline results are descriptive and never presented as
+controlled ratios.
 
-From a clone, enter the repository, inspect the cluster, and replace every placeholder in a private, ignored copy of the example environment file. Set `BENCH_REPO_ROOT` to the checkout's absolute path; Slurm jobs require it because a submitted script may execute from Slurm's spool directory. Never put `HF_TOKEN` in that file.
+## Setup
+
+Create a private cluster configuration and install the runner:
 
 ```bash
-git clone <REPOSITORY_URL> benchmark
-cd benchmark
 cp configs/cluster/sapienza.example.env configs/cluster/sapienza.env
-# Edit configs/cluster/sapienza.env using values discovered from the cluster.
-source configs/cluster/sapienza.env
-
+# Replace every placeholder in configs/cluster/sapienza.env.
 bash scripts/create_venv.sh --config configs/cluster/sapienza.env
-source "${VENV_PATH}/bin/activate"
-# The script installs this repository with pip -e. Now install a vLLM build compatible
-# with the detected Python/CUDA/driver environment, following the current official docs.
-
-# On a network-enabled host permitted by site policy, first accept any gated-model
-# terms in the browser, then enter a read token without echoing it.
-read -r -s -p 'HF token: ' HF_TOKEN
-printf '\n'
-export HF_TOKEN
-python scripts/download_model.py --config configs/cluster/sapienza.env \
-  --experiment configs/experiments/llama32_1b_smoke.yaml
-python scripts/download_model.py --config configs/cluster/sapienza.env \
-  --experiment configs/experiments/llama31_8b_smoke.yaml
-unset HF_TOKEN
-
-# Enter a one-GPU interactive allocation, reactivate the venv, then validate and run.
 source configs/cluster/sapienza.env
 source "${VENV_PATH}/bin/activate"
-bash scripts/preflight_check.sh --config configs/cluster/sapienza.env
-bash scripts/run_smoke_test.sh --config configs/cluster/sapienza.env \
-  --experiment configs/experiments/llama32_1b_smoke.yaml
-bash scripts/run_smoke_test.sh --config configs/cluster/sapienza.env \
-  --experiment configs/experiments/llama31_8b_smoke.yaml
 ```
 
-On the cluster, submit the same configurations through `slurm/smoke_test.sbatch` instead; site resource values are supplied with `sbatch`, not embedded in the job file. The detailed guide shows safe placeholder commands and offline-compute-node setup.
+Install a vLLM build compatible with the host CUDA stack when using vLLM. For native llama.cpp,
+set `LLAMA_CPP_BIN_DIR`, `LLAMA_CPP_CONVERT_SCRIPT`, and optionally
+`LLAMA_CPP_QUANTIZE_BIN`. For containers, configure immutable image references ending in
+`@sha256:<digest>`.
 
-## Comparable two-model run
-
-Use a matching pair of experiment files and do not change only one side:
+Prepare GGUF files outside timed runs. This also resolves the Hugging Face snapshot to an immutable
+commit, writes `artifact-manifest.json`, and makes subsequent vLLM and llama.cpp compositions use
+that same source revision:
 
 ```bash
-bash scripts/run_offline_benchmark.sh --config configs/cluster/sapienza.env \
-  --experiment configs/experiments/llama32_1b_offline.yaml
-bash scripts/run_offline_benchmark.sh --config configs/cluster/sapienza.env \
-  --experiment configs/experiments/llama31_8b_offline.yaml
-
-python scripts/compare_model_results.py \
-  "$RESULTS_ROOT"/<date>/<1b-run-id>/summary.json \
-  "$RESULTS_ROOT"/<date>/<8b-run-id>/summary.json \
-  --output-dir "$RESULTS_ROOT"/<date>/<comparison-id>
+llm-bench prepare-model \
+  --model configs/models/llama32_1b.yaml \
+  --provider native \
+  --variants f16,q8_0,q4_k_m \
+  --artifact-root "$MODEL_ARTIFACT_ROOT" \
+  --cache-root "$MODEL_CACHE_DIR"
 ```
 
-The comparison writes `comparison.json` and `comparison.csv`. It reports configuration mismatches and will not present incompatible runs as a fair comparison. The shipped pairs explicitly request `float16` as a common NVIDIA baseline; confirm support on the allocated GPU, or change both sides together. Serving benchmarks use the two corresponding `*_serving.yaml` files in exactly the same way. Those paired configurations explicitly disable model-repository generation defaults and fix sampling/EOS controls so the two models receive the same requested decode workload; the launcher fails rather than silently dropping a control that the installed vLLM CLI does not support.
+Repeat for `configs/models/llama31_8b.yaml`. Model snapshots, converted files, container caches,
+and results remain outside Git.
 
-## Interactive results dashboard
+## Validate and run
 
-Install the optional visualization dependencies. Launch without a results root to explore the
-in-memory demo, or point the read-only dashboard at local or copied measurements:
+Every execution uses the same stable interface:
+
+```text
+llm-bench validate --model MODEL --workload WORKLOAD --profile PROFILE --provider PROVIDER --variant VARIANT
+llm-bench prepare-model --model MODEL --provider PROVIDER --variants f16,q8_0,q4_k_m
+llm-bench preflight --model MODEL --workload WORKLOAD --profile PROFILE --provider PROVIDER --variant VARIANT
+llm-bench run --model MODEL --workload WORKLOAD --profile PROFILE --provider PROVIDER --variant VARIANT
+```
+
+For example, validate a vLLM GPU smoke test and inspect the fully wrapped command without starting
+inference:
+
+```bash
+llm-bench validate \
+  --model configs/models/llama32_1b.yaml \
+  --workload configs/workloads/smoke.yaml \
+  --profile configs/profiles/vllm_gpu.yaml \
+  --provider native --variant f16 \
+  --artifact-root "$MODEL_ARTIFACT_ROOT"
+
+llm-bench run --dry-run \
+  --model configs/models/llama32_1b.yaml \
+  --workload configs/workloads/smoke.yaml \
+  --profile configs/profiles/llamacpp_cpu.yaml \
+  --provider native --variant f16 \
+  --artifact-root "$MODEL_ARTIFACT_ROOT"
+```
+
+Then remove `--dry-run` to execute. The generic shell wrapper loads the cluster environment first:
+
+```bash
+bash scripts/run_benchmark.sh \
+  --config configs/cluster/sapienza.env \
+  --model configs/models/llama32_1b.yaml \
+  --workload configs/workloads/smoke.yaml \
+  --profile configs/profiles/llamacpp_cpu.yaml \
+  --provider native --variant f16
+```
+
+The same runner accepts `offline.yaml` or `serving.yaml`, either model, either compatible profile,
+and any supported provider/variant. Invalid combinations fail before a result is timed.
+
+For Slurm, pass site resources to `sbatch`; the repository does not guess them:
+
+```bash
+sbatch <SITE_RESOURCE_OPTIONS> \
+  --export=ALL,BENCH_CONFIG="$PWD/configs/cluster/sapienza.env",MODEL_CONFIG="$PWD/configs/models/llama32_1b.yaml",WORKLOAD_CONFIG="$PWD/configs/workloads/smoke.yaml",PROFILE_CONFIG="$PWD/configs/profiles/llamacpp_cuda.yaml",BENCH_PROVIDER=apptainer,MODEL_VARIANT=f16 \
+  slurm/benchmark.sbatch
+```
+
+## Results and comparison
+
+Each run is self-contained and includes `resolved_experiment.yaml`, source-config hashes,
+`model_artifact_provenance.json`, `metadata.json`, `summary.json` schema 2.0,
+`measurements.json`, backend or shared-harness raw JSON, telemetry CSV, logs, and a deterministic
+workload manifest/hash. API workloads include exact prompt text. Existing schema 1.0 and 1.1 result
+directories remain readable.
+
+The ordinary comparison command is strict and intended for like-for-like model comparisons:
+
+```bash
+llm-bench compare RUN_A RUN_B --output-dir COMPARISON_DIRECTORY
+```
+
+The Streamlit dashboard adds filters for backend, profile, provider, artifact variant, hardware,
+and measurement method. Its backend-treatment lens only produces ratios for controlled F16 shared-
+API runs whose source revision, tokenizer, provider, hardware, workload hash, actual token counts,
+and generation controls align.
 
 ```bash
 pip install -e ".[dashboard]"
-llm-bench dashboard
 llm-bench dashboard --results-root "$RESULTS_ROOT"
 ```
 
-The dashboard discovers every supported `summary.json` recursively and presents campaign health,
-performance trade-offs, metric completeness, run/repetition detail, hardware telemetry, and
-free-form exploration. The memory study visualizes GPU-versus-CPU platforms and controlled
-CPU DDR-versus-HBM pairs. Compare accepts two to six runs with absolute, like-for-like, and CPU
-memory-treatment lenses. The compact sidebar, hidden Streamlit toolbar, and accessible light/dark
-palettes keep the focus on data and charts.
-
-Without `--results-root`, the dashboard opens a deterministic in-memory preview containing GPU,
-CPU-DDR, and CPU-HBM runs. With a results root, the data-source menu can show filesystem evidence,
-the demo study, or both. Preview values are labelled simulated, never written to disk, and excluded
-from measured exports. The dashboard never assigns an overall score or evaluates answer quality.
-
-New runs also contain `measurements.json`, a stable normalized record of each configured measured
-repetition. Older result directories remain usable: the dashboard derives repetition values in
-memory from preserved raw and telemetry files and labels that fallback. See
-[Metrics and results](docs/04_METRICS_AND_RESULTS.md#interactive-visualization-and-comparison) for
-local and cluster access guidance.
+The dashboard is read-only. Running it without `--results-root` opens representative simulated
+vLLM and llama.cpp CPU/GPU data.
 
 ## Guides
 
-1. [Inspect the cluster from step zero](docs/01_CLUSTER_PREREQUISITES.md)
-2. [Create the environment and obtain both models](docs/02_ENVIRONMENT_AND_MODEL_SETUP.md)
-3. [Run smoke, offline, and serving benchmarks](docs/03_RUNNING_THE_BENCHMARKS.md)
-4. [Interpret metrics and compare the models](docs/04_METRICS_AND_RESULTS.md)
-5. [Extend the same schema toward CPU HBM](docs/05_CPU_HBM_ROADMAP.md)
+1. [Inspect the cluster](docs/01_CLUSTER_PREREQUISITES.md)
+2. [Set up providers and prepare models](docs/02_ENVIRONMENT_AND_MODEL_SETUP.md)
+3. [Run the benchmark matrix](docs/03_RUNNING_THE_BENCHMARKS.md)
+4. [Interpret metrics, results, and compatibility](docs/04_METRICS_AND_RESULTS.md)
+5. [Extend the CPU path toward HBM](docs/05_CPU_HBM_ROADMAP.md)
