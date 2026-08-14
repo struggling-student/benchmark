@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import importlib.metadata
 import json
@@ -47,13 +48,24 @@ def _run(command: Sequence[str]) -> str | None:
         return None
     if completed.returncode != 0:
         return None
-    return completed.stdout.strip() or None
+    return completed.stdout.strip() or completed.stderr.strip() or None
 
 
 def _package_version(distribution: str) -> str | None:
     try:
         return importlib.metadata.version(distribution)
     except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def _file_sha256(path: Path) -> str | None:
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return "sha256:" + digest.hexdigest()
+    except OSError:
         return None
 
 
@@ -87,6 +99,37 @@ def _optional_int(value: str | None) -> int | None:
         return int(value)
     except ValueError:
         return None
+
+
+def _memory_capacity_gib() -> float | None:
+    try:
+        import psutil
+
+        return psutil.virtual_memory().total / (1024**3)
+    except (ImportError, OSError):
+        return None
+
+
+def _cpu_isa(lscpu: dict[str, str]) -> str | None:
+    architecture = lscpu.get("Architecture") or platform.machine() or None
+    flags = set((lscpu.get("Flags") or lscpu.get("Features") or "").split())
+    selected = sorted(
+        flags
+        & {
+            "avx",
+            "avx2",
+            "avx512f",
+            "avx512_bf16",
+            "avx_vnni",
+            "amx_bf16",
+            "amx_int8",
+            "sve",
+            "sve2",
+        }
+    )
+    if architecture and selected:
+        return f"{architecture}:" + ",".join(selected)
+    return architecture
 
 
 def _visible_devices(
@@ -258,19 +301,59 @@ def collect_metadata(
             "PyTorch did not confirm an allocated CUDA device; GPU identity/count are "
             "left unavailable rather than recording every node GPU."
         )
-    backend_version = _package_version(config.backend)
+    selected_type = benchmark_type or config.resolved_benchmark_type
+    if config.backend == "vllm":
+        backend_version = _package_version("vllm")
+        vllm_executable = os.environ.get("VLLM_BIN") or "vllm"
+        native_binary_version = (
+            _run((vllm_executable, "--version")) if config.provider == "native" else None
+        )
+    else:
+        llama_executable = "llama-bench" if selected_type == "offline" else "llama-server"
+        if config.provider == "native" and os.environ.get("LLAMA_CPP_BIN_DIR"):
+            llama_executable = str(
+                Path(os.environ["LLAMA_CPP_BIN_DIR"]).expanduser() / llama_executable
+            )
+        native_binary_version = (
+            _run((llama_executable, "--version")) if config.provider == "native" else None
+        )
+        backend_version = native_binary_version
     # Distribution spelling is fixed for these common packages, independent of imports.
     software_versions = {
         "python": platform.python_version(),
         "llm_bench": __version__,
         "vllm": _package_version("vllm"),
+        "llamacpp": backend_version if config.backend == "llamacpp" else None,
         "torch": _package_version("torch"),
         "pyyaml": _package_version("PyYAML"),
         "nvidia_driver": driver_version,
         "cuda_runtime": cuda_runtime,
     }
     accelerator_names = sorted({device["name"] for device in accelerators})
-    selected_type = benchmark_type or config.resolved_benchmark_type
+    if config.hardware_type == "cpu":
+        accelerators = []
+        accelerator_names = []
+        visibility_warning = None
+        nvidia_devices_unscoped = False
+        accelerator_visibility = None
+    container_image = None
+    if config.provider == "docker":
+        container_image = os.environ.get(
+            "VLLM_DOCKER_IMAGE" if config.backend == "vllm" else "LLAMA_CPP_DOCKER_IMAGE"
+        )
+    elif config.provider == "apptainer":
+        container_image = os.environ.get(
+            "VLLM_APPTAINER_IMAGE"
+            if config.backend == "vllm"
+            else "LLAMA_CPP_APPTAINER_IMAGE"
+        )
+    container_digest = (
+        "sha256:" + container_image.split("@sha256:", 1)[1]
+        if container_image and "@sha256:" in container_image
+        else _file_sha256(Path(container_image).expanduser())
+        if container_image and Path(container_image).expanduser().is_file()
+        else None
+    )
     resolved_model_revision = _cached_revision(config.model_id, config.model_revision)
     if config.tokenizer == config.model_id:
         resolved_tokenizer_revision = resolved_model_revision
@@ -287,16 +370,44 @@ def collect_metadata(
             "Resolved tokenizer snapshot revision was not available from the local "
             "Hugging Face cache; pin/cache its revision before a formal comparison."
         )
+    rapl_paths = list(Path("/sys/class/powercap").glob("intel-rapl:*/energy_uj"))
+    rapl_available = any(os.access(path, os.R_OK) for path in rapl_paths)
+    gpu_power_available = config.hardware_type in {"gpu", "hybrid"} and bool(accelerators)
+    power_instruments = [
+        name
+        for enabled, name in (
+            (rapl_available, "linux_rapl"),
+            (gpu_power_available, "nvidia_smi"),
+        )
+        if enabled
+    ]
     return {
         "schema_version": "1.0",
         "run_id": run_id or make_run_id(config.experiment_name),
         "timestamp": utc_timestamp(),
         "experiment_name": config.experiment_name,
+        "model_key": config.model_key,
+        "workload_key": config.workload_key,
         "benchmark_type": selected_type,
         "backend": config.backend,
         "backend_version": backend_version,
+        "backend_profile": config.profile_name,
+        "execution_provider": config.provider,
+        "container_image": container_image,
+        "container_image_digest": container_digest,
+        "container_id": None,
+        "native_binary_version": native_binary_version,
+        "measurement_method": (
+            "backend_native" if selected_type == "offline" else "shared_openai_streaming"
+        ),
+        "measurement_scope": (
+            "backend_native_no_common_boundary"
+            if selected_type == "offline"
+            else "client_observed_end_to_end"
+        ),
         "model_id": config.model_id,
         "model_revision": config.model_revision,
+        "model_revision_policy": config.model_revision_policy,
         "resolved_model_revision": resolved_model_revision,
         "tokenizer_id": config.tokenizer,
         "resolved_tokenizer_revision": resolved_tokenizer_revision,
@@ -305,9 +416,7 @@ def collect_metadata(
         "git_dirty": git_dirty(repository),
         "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
         "hostname": socket.gethostname(),
-        "hardware_type": (
-            "gpu" if accelerators else "unknown" if nvidia_devices_unscoped else "cpu"
-        ),
+        "hardware_type": config.hardware_type,
         "accelerator_name": ", ".join(accelerator_names) if accelerator_names else None,
         "accelerator_count": None if nvidia_devices_unscoped else len(accelerators),
         "accelerator_visibility": accelerator_visibility,
@@ -315,6 +424,31 @@ def collect_metadata(
         "cpu_model": lscpu.get("Model name") or platform.processor() or None,
         "socket_count": _optional_int(lscpu.get("Socket(s)")),
         "numa_node_count": _optional_int(lscpu.get("NUMA node(s)")),
+        "thread_count": config.thread_count,
+        "thread_count_batch": config.thread_count_batch,
+        "cpu_mask": config.cpu_mask,
+        "numa_policy": config.numa_policy,
+        "memory_binding": config.memory_binding,
+        "memory_type": config.memory_type,
+        "memory_mode": config.memory_mode,
+        "memory_capacity_gib": _memory_capacity_gib(),
+        "thread_affinity": config.cpu_mask,
+        "process_count": 1,
+        "cpu_isa": _cpu_isa(lscpu),
+        "gpu_layers": config.gpu_layers,
+        "batch_size": config.batch_size,
+        "ubatch_size": config.ubatch_size,
+        "parallel_slots": config.parallel_slots,
+        "telemetry_scope": "workload_process_and_visible_devices",
+        "energy_scope": "available_cpu_package_plus_visible_gpu",
+        "instrumentation_boundary": "measured_repetitions_only",
+        "memory_bandwidth_instrument": None,
+        "memory_bandwidth_scope": None,
+        "power_instrument": ",".join(power_instruments) if power_instruments else None,
+        "power_scope": (
+            "available_cpu_packages_and_visible_gpus" if power_instruments else None
+        ),
+        "configuration_hashes": {},
         "software_versions": software_versions,
         "warnings": metadata_warnings,
     }
