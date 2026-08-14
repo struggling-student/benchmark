@@ -32,6 +32,7 @@ from llm_bench.results import (
     COMPATIBILITY_FIELDS,
     CPU_COMPATIBILITY_FIELDS,
     ResultError,
+    check_backend_treatment_compatibility,
     compare_summaries,
 )
 
@@ -840,6 +841,11 @@ def _filter_entries(
             "Status": "All statuses",
             "Precision": "All precisions",
             "Evidence source": "All evidence sources",
+            "Backend": "All backends",
+            "Execution profile": "All execution profiles",
+            "Provider": "All providers",
+            "Artifact variant": "All artifact variants",
+            "Measurement method": "All measurement methods",
         }
         return st.multiselect(
             label,
@@ -860,6 +866,11 @@ def _filter_entries(
         statuses = choose("Status", "status")
         precision = choose("Precision", "precision")
         sources = choose("Evidence source", "source")
+        backends = choose("Backend", "backend")
+        profiles = choose("Execution profile", "backend_profile")
+        providers = choose("Provider", "provider")
+        variants = choose("Artifact variant", "artifact_variant")
+        methods = choose("Measurement method", "measurement_method")
         workload_query = (
             st.text_input(
                 "Workload contains",
@@ -883,6 +894,11 @@ def _filter_entries(
                 "status",
                 "precision",
                 "source",
+                "backend",
+                "backend_profile",
+                "provider",
+                "artifact_variant",
+                "measurement_method",
                 "workload",
             ):
                 st.session_state.pop(widget_key(f"filter_{field}"), None)
@@ -896,6 +912,11 @@ def _filter_entries(
         "status": set(statuses),
         "precision": set(precision),
         "source": set(sources),
+        "backend": set(backends),
+        "backend_profile": set(profiles),
+        "provider": set(providers),
+        "artifact_variant": set(variants),
+        "measurement_method": set(methods),
     }
     filtered = []
     for entry in catalog.entries:
@@ -1553,6 +1574,9 @@ def _render_run_detail(
     with controls_tab:
         workload_fields = (
             ("benchmark_type", "Benchmark"),
+            ("measurement_method", "Measurement method"),
+            ("measurement_scope", "Measurement scope"),
+            ("workload_manifest_sha256", "Workload manifest SHA-256"),
             ("input_length", "Input length"),
             ("output_length", "Output length"),
             ("number_of_requests", "Requests per repetition"),
@@ -1560,10 +1584,20 @@ def _render_run_detail(
             ("maximum_concurrency", "Maximum concurrency"),
             ("batch_size", "Batch size"),
             ("warmup_runs", "Warm-up runs"),
+            ("backend_internal_warmup", "Backend-internal warm-up"),
             ("repetitions", "Measured repetitions configured"),
             ("seed", "Seed"),
         )
         hardware_fields = (
+            ("backend", "Backend"),
+            ("backend_version", "Backend version"),
+            ("backend_profile", "Execution profile"),
+            ("execution_provider", "Provider"),
+            ("container_image_digest", "Container digest"),
+            ("container_id", "Container ID"),
+            ("model_artifact_format", "Artifact format"),
+            ("model_artifact_variant", "Artifact variant"),
+            ("model_artifact_sha256", "Artifact SHA-256"),
             ("hardware_type", "Hardware type"),
             ("accelerator_name", "Accelerator"),
             ("accelerator_count", "Accelerator count"),
@@ -1574,10 +1608,15 @@ def _render_run_detail(
             ("memory_mode", "Memory mode"),
             ("memory_capacity_gib", "Memory capacity (GiB)"),
             ("thread_count", "Thread count"),
+            ("thread_count_batch", "Batch thread count"),
+            ("cpu_mask", "CPU mask"),
             ("process_count", "Process count"),
             ("thread_affinity", "Thread affinity"),
             ("numa_policy", "NUMA policy"),
             ("memory_binding", "Memory binding"),
+            ("gpu_layers", "GPU-offloaded layers"),
+            ("ubatch_size", "Physical batch size"),
+            ("parallel_slots", "Parallel server slots"),
             ("cpu_isa", "CPU ISA"),
             ("memory_bandwidth_instrument", "Bandwidth instrument"),
             ("memory_bandwidth_scope", "Bandwidth scope"),
@@ -1601,6 +1640,26 @@ def _render_run_detail(
                 st.info("No hardware-placement controls were recorded.")
 
     with evidence_tab:
+        provenance_fields = (
+            ("model_id", "Canonical model"),
+            ("model_revision_policy", "Revision policy"),
+            ("resolved_model_revision", "Resolved model revision"),
+            ("tokenizer_id", "Canonical tokenizer"),
+            ("resolved_tokenizer_revision", "Resolved tokenizer revision"),
+            ("model_artifact_source_revision", "Artifact source revision"),
+            ("model_artifact_sha256", "Artifact SHA-256"),
+            ("container_image_digest", "Container/image SHA-256"),
+            ("native_binary_version", "Native binary version"),
+            ("workload_manifest_sha256", "Workload manifest SHA-256"),
+            ("git_commit", "Runner Git commit"),
+            ("configuration_hashes", "Source-config hashes"),
+        )
+        st.subheader("Provenance")
+        provenance = _control_rows(summary, provenance_fields)
+        if provenance:
+            st.dataframe(pd.DataFrame(provenance), width="stretch", hide_index=True)
+        else:
+            st.info("This legacy result does not contain structured provenance fields.")
         warnings = summary.get("warnings", [])
         if warnings:
             st.subheader(f"Warnings ({len(warnings)})")
@@ -2500,6 +2559,15 @@ def _comparison_compatibility(
             "allowed": result["status"] == "compatible",
             "evidence": result["evidence"],
         }
+    if lens == "Backend treatment":
+        result = check_backend_treatment_compatibility(
+            baseline.summary, candidate.summary
+        )
+        return {
+            "status": result["status"],
+            "allowed": result["status"] == "compatible",
+            "evidence": result["evidence"],
+        }
 
     comparison = compare_summaries(baseline.summary, candidate.summary)
     compatibility = comparison["compatibility"]
@@ -2594,7 +2662,7 @@ def _render_compare(
     controls = st.columns(2)
     lens = controls[0].selectbox(
         "Lens",
-        ("Absolute values", "Like-for-like", "CPU memory treatment"),
+        ("Absolute values", "Like-for-like", "Backend treatment", "CPU memory treatment"),
         key="comparison_lens",
     )
     baseline = controls[1].selectbox(

@@ -162,13 +162,30 @@ def _shared_identity(
             "benchmark_type": benchmark_type,
             "backend": backend,
             "backend_version": "preview-1",
+            "backend_profile": "vllm_gpu" if backend == "vllm" else "llamacpp_cpu",
+            "execution_provider": "native",
+            "measurement_method": (
+                "backend_native" if benchmark_type == "offline" else "shared_openai_streaming"
+            ),
+            "measurement_scope": (
+                "backend_native_no_common_boundary"
+                if benchmark_type == "offline"
+                else "client_observed_end_to_end"
+            ),
+            "workload_manifest_sha256": (
+                None if benchmark_type == "offline" else f"demo-{model_scale}-{input_length}"
+            ),
             "model_id": model_id,
             "model_revision": "demo-revision",
             "resolved_model_revision": "demo-revision",
             "tokenizer_id": model_id,
             "resolved_tokenizer_revision": "demo-revision",
             "model_parameter_scale": model_scale,
-            "model_precision": "bfloat16",
+            "model_precision": "float16",
+            "model_artifact_format": "huggingface" if backend == "vllm" else "gguf",
+            "model_artifact_variant": "f16",
+            "model_artifact_sha256": f"demo-artifact-{model_scale}",
+            "model_artifact_source_revision": "demo-revision",
             "git_commit": "demo000",
             "git_dirty": False,
             "slurm_job_id": f"demo-{run_id}",
@@ -263,6 +280,7 @@ def _gpu_summary(
     scale_factor: float,
     input_length: int,
     output_length: int,
+    backend: str = "vllm",
 ) -> dict[str, Any]:
     request_count = 96 if benchmark_type == "offline" else 64
     concurrency = None if benchmark_type == "offline" else 16
@@ -273,7 +291,7 @@ def _gpu_summary(
         benchmark_type=benchmark_type,
         model_id=model_id,
         model_scale=model_scale,
-        backend="vllm",
+        backend=backend,
         input_length=input_length,
         output_length=output_length,
         number_of_requests=request_count,
@@ -316,7 +334,8 @@ def _gpu_summary(
             "software_versions": {
                 "python": "3.12.4",
                 "llm_bench": "preview",
-                "vllm": "0.11.0",
+                "vllm": "0.11.0" if backend == "vllm" else None,
+                "llamacpp": "b6200" if backend == "llamacpp" else None,
                 "torch": "2.8.0",
                 "cuda_runtime": "12.9",
                 "nvidia_driver": "580.0",
@@ -347,7 +366,7 @@ def _cpu_summary(
         benchmark_type=benchmark_type,
         model_id=model_id,
         model_scale=model_scale,
-        backend="llama.cpp",
+        backend="llamacpp",
         input_length=input_length,
         output_length=output_length,
         number_of_requests=request_count,
@@ -563,6 +582,28 @@ def simulated_dataset() -> DashboardDataset:
                         output_length=output_length,
                     )
                 )
+
+    counter += 1
+    llama_gpu = _gpu_summary(
+        run_id="demo-gpu-llamacpp-1b-serving-256",
+        timestamp=start + timedelta(hours=counter),
+        benchmark_type="serving",
+        model_id=models[0][0],
+        model_scale=models[0][1],
+        scale_factor=models[0][2] * 0.78,
+        input_length=256,
+        output_length=128,
+        backend="llamacpp",
+    )
+    llama_gpu.update(
+        {
+            "backend_profile": "llamacpp_cuda",
+            "gpu_layers": "all",
+            "thread_count": 8,
+            "parallel_slots": 16,
+        }
+    )
+    summaries.append(llama_gpu)
 
     for model_id, model_scale, scale_factor in models:
         for benchmark_type, input_length, output_length in (
