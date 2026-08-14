@@ -1,0 +1,15 @@
+schema_version: "2.0"
+workload_key: smoke
+benchmark_type: smoke
+seed: 42
+number_of_prompts: 2
+input_length: 32
+output_length: 16
+temperature: 0.0
+top_p: 1.0
+ignore_eos: true
+request_rate: null
+maximum_concurrency: 1
+repetitions: 1
+warmup_runs: 0
+telemetry_interval_ms: 1000

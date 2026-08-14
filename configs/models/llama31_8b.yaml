@@ -1,0 +1,32 @@
+schema_version: "2.0"
+model_key: llama31_8b
+model_id: meta-llama/Llama-3.1-8B-Instruct
+tokenizer_id: meta-llama/Llama-3.1-8B-Instruct
+model_revision: null
+revision_policy: resolve-and-record
+model_parameter_scale: 8B
+max_model_len: 8192
+variants:
+  f16:
+    precision: float16
+    quantization: null
+    artifacts:
+      vllm:
+        format: huggingface
+      llamacpp:
+        format: gguf
+        filename: llama31-8b-instruct-f16.gguf
+  q8_0:
+    precision: int8
+    quantization: Q8_0
+    artifacts:
+      llamacpp:
+        format: gguf
+        filename: llama31-8b-instruct-q8_0.gguf
+  q4_k_m:
+    precision: int4
+    quantization: Q4_K_M
+    artifacts:
+      llamacpp:
+        format: gguf
+        filename: llama31-8b-instruct-q4_k_m.gguf
