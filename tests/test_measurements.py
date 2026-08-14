@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from llm_bench.cli import main
 from llm_bench.config import config_from_mapping
 from llm_bench.measurements import (
     create_measurements,
@@ -186,22 +185,7 @@ def test_telemetry_series_reads_cpu_memory_and_power_samples(tmp_path: Path) -> 
     assert series[1]["elapsed_seconds"] == pytest.approx(1)
 
 
-def test_normalize_cli_writes_measurements_artifact(tmp_path: Path) -> None:
-    config_path = tmp_path / "experiment.yaml"
-    config_path.write_text(
-        """
-experiment_name: cli-test
-benchmark_type: offline
-backend: vllm
-model_id: test-model
-number_of_prompts: 2
-input_length: 16
-output_length: 8
-repetitions: 1
-warmup_runs: 0
-""".lstrip(),
-        encoding="utf-8",
-    )
+def test_measurement_writer_handles_generic_raw_output(tmp_path: Path) -> None:
     config = config_from_mapping(
         {
             "experiment_name": "cli-test",
@@ -220,17 +204,12 @@ warmup_runs: 0
     raw = run_dir / "raw_vllm_output.json"
     raw.write_text('{"requests_per_second": 2}', encoding="utf-8")
 
-    exit_code = main(
-        [
-            "normalize-results",
-            "--config",
-            str(config_path),
-            "--run-dir",
-            str(run_dir),
-            "--raw-output",
-            str(raw),
-        ]
+    normalized = normalize_summary(
+        create_summary(config, {"run_id": "cli-run"}), raw_output_paths=[raw]
     )
+    measurements = create_measurements(
+        normalized, run_directory=run_dir, raw_output_paths=[raw]
+    )
+    write_measurements(run_dir / "measurements.json", measurements)
 
-    assert exit_code == 0
     assert load_measurements(run_dir / "measurements.json")["run_id"] == "cli-run"

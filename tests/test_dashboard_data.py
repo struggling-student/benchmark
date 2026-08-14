@@ -24,13 +24,13 @@ def test_simulated_study_is_deterministic_finite_and_in_memory(tmp_path: Path) -
     first = simulated_dataset()
     second = simulated_dataset()
 
-    assert len(first.catalog.entries) == 17
+    assert len(first.catalog.entries) == 18
     assert [entry.summary for entry in first.catalog.entries] == [
         entry.summary for entry in second.catalog.entries
     ]
     assert first.measurements == second.measurements
     assert first.telemetry == second.telemetry
-    assert len({entry.key for entry in first.catalog.entries}) == 17
+    assert len({entry.key for entry in first.catalog.entries}) == 18
     assert list(tmp_path.iterdir()) == before
 
     json.dumps(
@@ -50,6 +50,10 @@ def test_simulated_study_covers_gpu_cpu_ddr_hbm_and_failure_states() -> None:
 
     assert platforms == {"GPU", "CPU · DDR", "CPU · HBM"}
     assert statuses == {"completed", "failed"}
+    assert {entry.summary["backend"] for entry in dataset.catalog.entries} == {
+        "vllm",
+        "llamacpp",
+    }
     assert all(
         set(SUMMARY_FIELDS).issubset(entry.summary) for entry in dataset.catalog.entries
     )
@@ -137,7 +141,7 @@ def test_combining_datasets_preserves_measured_provenance_and_sorting(
 
     combined = combine_datasets(measured, simulated_dataset())
 
-    assert len(combined.catalog.entries) == 18
+    assert len(combined.catalog.entries) == 19
     assert combined.catalog.entries[0].key == entry.key
     assert not combined.is_simulated(entry)
     assert catalog_row(entry)["source"] == "Measured"

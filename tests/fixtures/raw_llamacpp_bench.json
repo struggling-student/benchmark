@@ -1,0 +1,11 @@
+[
+  {
+    "build_commit": "fixture",
+    "n_prompt": 8,
+    "n_gen": 4,
+    "avg_ns": 1000000000,
+    "avg_ts": 12.0,
+    "samples_ns": [900000000, 1100000000],
+    "samples_ts": [13.333333, 10.909091]
+  }
+]

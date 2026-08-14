@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "measurement_method": "shared_openai_streaming",
+  "measurement_scope": "client_observed_end_to_end",
+  "duration_seconds": 1.0,
+  "successful_requests": 2,
+  "failed_requests": 0,
+  "actual_input_tokens": 8,
+  "actual_output_tokens": 4,
+  "request_throughput_requests_per_second": 2.0,
+  "output_throughput_tokens_per_second": 4.0,
+  "mean_ttft_ms": 12.0,
+  "requests": []
+}

@@ -1,0 +1,10 @@
+{
+  "elapsed_time": 2.0,
+  "num_requests": 4,
+  "total_input_tokens": 32,
+  "total_generated_tokens": 16,
+  "request_throughput": 2.0,
+  "input_throughput": 16.0,
+  "output_throughput": 8.0,
+  "total_token_throughput": 24.0
+}

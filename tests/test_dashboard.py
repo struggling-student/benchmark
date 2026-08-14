@@ -95,7 +95,7 @@ def test_empty_results_root_defaults_to_full_simulated_study(tmp_path: Path) -> 
 
     assert not app.exception
     assert app.sidebar.selectbox[0].value == "Demo study"
-    assert app.metric[0].value == "17"
+    assert app.metric[0].value == "18"
     assert not list(tmp_path.iterdir())
 
     for page in ("Run detail", "Explorer", "Memory study", "Compare"):
@@ -114,4 +114,4 @@ def test_omitted_results_root_opens_demo_study() -> None:
     assert not app.exception
     assert app.sidebar.selectbox[0].options == ["Demo study"]
     assert app.sidebar.selectbox[0].value == "Demo study"
-    assert app.metric[0].value == "17"
+    assert app.metric[0].value == "18"
