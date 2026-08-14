@@ -1,114 +1,96 @@
-"""Argparse entry points used by the shell and Slurm wrappers."""
+"""Public CLI for composed benchmark preparation, execution, and analysis."""
 
 from __future__ import annotations
 
 import argparse
 import importlib.util
 import json
-import shutil
+import os
 import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from .config import BENCHMARK_TYPES, ConfigurationError, load_experiment
-from .measurements import create_measurements, write_measurements
-from .metadata import collect_metadata, write_metadata
-from .results import (
-    ResultError,
-    compare_paths,
-    create_summary,
-    load_summary,
-    normalize_summary,
-    write_summary,
+from .config import (
+    PROVIDERS,
+    ConfigurationError,
+    load_composed_experiment,
+    load_model_manifest,
 )
+from .preparation import prepare_model
+from .results import ResultError, compare_paths
+from .runner import run_experiment, validate_runtime
 
 
-def _benchmark_type(config_type: str, requested: str | None) -> str:
-    if requested is not None and requested != config_type:
+def _composed(args: argparse.Namespace):
+    return load_composed_experiment(
+        args.model,
+        args.workload,
+        args.profile,
+        provider=args.provider,
+        variant=args.variant,
+        artifact_root=args.artifact_root,
+    )
+
+
+def _validate(args: argparse.Namespace) -> int:
+    config = _composed(args)
+    print(json.dumps(config.to_dict(), indent=2, sort_keys=True, allow_nan=False))
+    return 0
+
+
+def _preflight(args: argparse.Namespace) -> int:
+    config = _composed(args)
+    report = validate_runtime(config, require_artifact=not args.allow_missing_artifact)
+    print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
+    return 0
+
+
+def _prepare_model(args: argparse.Namespace) -> int:
+    model = load_model_manifest(args.model)
+    variants = [value.strip() for value in args.variants.split(",") if value.strip()]
+    if not variants:
+        raise ConfigurationError("--variants must contain at least one variant")
+    artifact_root = args.artifact_root or os.environ.get("MODEL_ARTIFACT_ROOT")
+    cache_root = args.cache_root or os.environ.get("MODEL_CACHE_DIR")
+    if not artifact_root or not cache_root:
         raise ConfigurationError(
-            f"requested benchmark type {requested!r} does not match configuration "
-            f"type {config_type!r}"
+            "prepare-model requires --artifact-root/--cache-root or "
+            "MODEL_ARTIFACT_ROOT/MODEL_CACHE_DIR"
         )
-    return requested or config_type
-
-
-def _validate_config(args: argparse.Namespace) -> int:
-    config = load_experiment(args.config)
-    selected = _benchmark_type(config.resolved_benchmark_type, args.benchmark_type)
-    print(f"valid: {config.experiment_name} ({selected}, {config.backend}, {config.model_id})")
+    manifest = prepare_model(
+        model,
+        provider_name=args.provider,
+        variants=variants,
+        artifact_root=artifact_root,
+        cache_root=cache_root,
+        local_files_only=args.local_files_only,
+    )
+    print(json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False))
     return 0
 
 
-def _get_config(args: argparse.Namespace) -> int:
-    config = load_experiment(args.config)
-    values = config.to_dict()
-    if args.field not in values:
-        valid = ", ".join(sorted(values))
-        raise ConfigurationError(f"unknown configuration field {args.field!r}; choose: {valid}")
-    value = values[args.field]
-    if args.json:
-        print(json.dumps(value, allow_nan=False))
-    elif value is None:
-        print("")
-    elif isinstance(value, bool):
-        print(str(value).lower())
-    else:
-        print(value)
-    return 0
-
-
-def _init_run(args: argparse.Namespace) -> int:
-    config_path = Path(args.config).resolve()
-    config = load_experiment(config_path)
-    selected = _benchmark_type(config.resolved_benchmark_type, args.benchmark_type)
-    run_directory = Path(args.run_dir).resolve()
-    run_directory.mkdir(parents=True, exist_ok=True)
-    metadata = collect_metadata(
+def _run(args: argparse.Namespace) -> int:
+    config = _composed(args)
+    if args.dry_run:
+        report = validate_runtime(config, require_artifact=not args.allow_missing_artifact)
+        report["resolved_experiment"] = config.to_dict()
+        print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
+        return 0
+    results_root = args.results_root or os.environ.get("RESULTS_ROOT") or Path.cwd() / "results"
+    destination = run_experiment(
         config,
-        benchmark_type=selected,
-        run_id=args.run_id,
+        source_paths={
+            "model": Path(args.model).expanduser().resolve(),
+            "workload": Path(args.workload).expanduser().resolve(),
+            "profile": Path(args.profile).expanduser().resolve(),
+        },
+        results_root=results_root,
+        run_directory=args.run_dir,
         repository=args.repository,
     )
-    shutil.copyfile(config_path, run_directory / "experiment.yaml")
-    write_metadata(run_directory / "metadata.json", metadata)
-    summary = create_summary(config, metadata)
-    write_summary(run_directory / "summary.json", summary)
-    print(run_directory)
-    return 0
-
-
-def _normalize_results(args: argparse.Namespace) -> int:
-    config = load_experiment(args.config)
-    selected = _benchmark_type(config.resolved_benchmark_type, args.benchmark_type)
-    run_directory = Path(args.run_dir).resolve()
-    summary_path = run_directory / "summary.json"
-    summary = load_summary(summary_path)
-    if summary.get("benchmark_type") != selected:
-        raise ResultError(
-            "summary benchmark_type does not match the requested experiment type: "
-            f"{summary.get('benchmark_type')!r} != {selected!r}"
-        )
-    normalized = normalize_summary(
-        summary,
-        raw_output_paths=args.raw_output,
-        telemetry_paths=args.telemetry,
-        status=args.status,
-        duration_seconds=args.duration_seconds,
-        model_load_time_seconds=args.model_load_time_seconds,
-        warnings=args.warning,
-        error=args.error,
-    )
-    measurements = create_measurements(
-        normalized,
-        run_directory=run_directory,
-        raw_output_paths=args.raw_output,
-        telemetry_paths=args.telemetry,
-    )
-    write_measurements(run_directory / "measurements.json", measurements)
-    write_summary(summary_path, normalized)
-    print(summary_path)
+    print(destination)
     return 0
 
 
@@ -126,13 +108,12 @@ def _dashboard(args: argparse.Namespace) -> int:
             "dashboard dependencies are unavailable; install them with "
             'pip install -e ".[dashboard]"'
         )
-    dashboard_path = Path(__file__).with_name("dashboard.py")
     command = [
         sys.executable,
         "-m",
         "streamlit",
         "run",
-        str(dashboard_path),
+        str(Path(__file__).with_name("dashboard.py")),
         "--server.address",
         args.host,
         "--server.port",
@@ -145,106 +126,66 @@ def _dashboard(args: argparse.Namespace) -> int:
         "minimal",
     ]
     if args.results_root is not None:
-        command.extend(
-            (
-                "--",
-                "--results-root",
-                str(args.results_root.expanduser().resolve()),
-            )
-        )
+        command.extend(("--", "--results-root", str(args.results_root.expanduser().resolve())))
     try:
         return subprocess.call(command)
     except KeyboardInterrupt:
         return 130
 
 
-def _add_type_argument(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--benchmark-type", choices=BENCHMARK_TYPES)
+def _add_composed_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--model", type=Path, required=True, help="model manifest YAML")
+    parser.add_argument("--workload", type=Path, required=True, help="workload YAML")
+    parser.add_argument("--profile", type=Path, required=True, help="execution profile YAML")
+    parser.add_argument("--provider", choices=PROVIDERS, required=True)
+    parser.add_argument("--variant", required=True, help="model artifact variant, such as f16")
+    parser.add_argument("--artifact-root", type=Path, help="override MODEL_ARTIFACT_ROOT")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the command parser, kept separate for focused unit tests."""
-
     parser = argparse.ArgumentParser(
-        prog="llm-bench", description="Thin metadata and result utilities for vLLM runs"
+        prog="llm-bench",
+        description="Composable vLLM and llama.cpp inference benchmarking",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    validate = subparsers.add_parser("validate-config", help="validate one experiment YAML file")
-    validate.add_argument("config", type=Path)
-    _add_type_argument(validate)
-    validate.set_defaults(handler=_validate_config)
+    validate = subparsers.add_parser("validate", help="validate a composed experiment")
+    _add_composed_arguments(validate)
+    validate.set_defaults(handler=_validate)
 
-    get_config = subparsers.add_parser(
-        "get-config", help="print one validated experiment field for a shell wrapper"
+    prepare = subparsers.add_parser(
+        "prepare-model", help="download, convert, and optionally quantize a model"
     )
-    get_config.add_argument("config", type=Path)
-    get_config.add_argument("field")
-    get_config.add_argument("--json", action="store_true", help="print JSON, including null")
-    get_config.set_defaults(handler=_get_config)
+    prepare.add_argument("--model", type=Path, required=True)
+    prepare.add_argument("--provider", choices=PROVIDERS, required=True)
+    prepare.add_argument("--variants", required=True, help="comma-separated GGUF variants")
+    prepare.add_argument("--artifact-root", type=Path)
+    prepare.add_argument("--cache-root", type=Path)
+    prepare.add_argument("--local-files-only", action="store_true")
+    prepare.set_defaults(handler=_prepare_model)
 
-    initialize = subparsers.add_parser(
-        "init-run", help="copy the experiment and initialize metadata.json and summary.json"
-    )
-    initialize.add_argument("--config", type=Path, required=True)
-    initialize.add_argument("--run-dir", type=Path, required=True)
-    _add_type_argument(initialize)
-    initialize.add_argument("--run-id", help="reuse a run ID allocated by the wrapper")
-    initialize.add_argument(
-        "--repository", type=Path, default=Path.cwd(), help="repository used for git_commit"
-    )
-    initialize.set_defaults(handler=_init_run)
+    preflight = subparsers.add_parser("preflight", help="validate runtime and artifacts")
+    _add_composed_arguments(preflight)
+    preflight.add_argument("--allow-missing-artifact", action="store_true", help=argparse.SUPPRESS)
+    preflight.set_defaults(handler=_preflight)
 
-    normalize = subparsers.add_parser(
-        "normalize-results",
-        help="aggregate explicitly supplied measured repetitions into summary.json",
-    )
-    normalize.add_argument("--config", type=Path, required=True)
-    normalize.add_argument("--run-dir", type=Path, required=True)
-    _add_type_argument(normalize)
-    normalize.add_argument("--status", choices=("completed", "failed"), default="completed")
-    normalize.add_argument(
-        "--raw-output",
-        type=Path,
-        action="append",
-        default=[],
-        help="measured raw vLLM JSON; repeat for every measured repetition",
-    )
-    normalize.add_argument(
-        "--telemetry",
-        type=Path,
-        action="append",
-        default=[],
-        help="measured nvidia-smi CSV; repeat for every telemetry file",
-    )
-    normalize.add_argument(
-        "--duration-seconds",
-        type=float,
-        help="fallback duration when the backend JSON does not contain one",
-    )
-    normalize.add_argument(
-        "--model-load-time-seconds", type=float, help="measured model loading duration"
-    )
-    normalize.add_argument("--warning", action="append", default=[])
-    normalize.add_argument("--error", help="failure detail saved without dropping the run")
-    normalize.set_defaults(handler=_normalize_results)
+    run = subparsers.add_parser("run", help="run one composed benchmark")
+    _add_composed_arguments(run)
+    run.add_argument("--results-root", type=Path)
+    run.add_argument("--run-dir", type=Path)
+    run.add_argument("--repository", type=Path, default=Path.cwd())
+    run.add_argument("--dry-run", action="store_true")
+    run.add_argument("--allow-missing-artifact", action="store_true", help=argparse.SUPPRESS)
+    run.set_defaults(handler=_run)
 
-    compare = subparsers.add_parser(
-        "compare", help="compare exactly two explicit summaries or result directories"
-    )
+    compare = subparsers.add_parser("compare", help="compare two summaries or result directories")
     compare.add_argument("left", type=Path)
     compare.add_argument("right", type=Path)
     compare.add_argument("--output-dir", type=Path, required=True)
     compare.set_defaults(handler=_compare)
 
-    dashboard = subparsers.add_parser(
-        "dashboard", help="launch the optional interactive results dashboard"
-    )
-    dashboard.add_argument(
-        "--results-root",
-        type=Path,
-        help="results directory; omit to open the in-memory demo study",
-    )
+    dashboard = subparsers.add_parser("dashboard", help="launch the read-only Streamlit dashboard")
+    dashboard.add_argument("--results-root", type=Path)
     dashboard.add_argument("--host", default="127.0.0.1")
     dashboard.add_argument("--port", type=int, default=8501)
     dashboard.set_defaults(handler=_dashboard)
@@ -252,8 +193,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run a subcommand and render domain errors without a Python traceback."""
-
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
@@ -261,6 +200,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return int(handler(args))
     except (ConfigurationError, ResultError, OSError, ValueError) as exc:
         parser.exit(2, f"error: {exc}\n")
+    except KeyboardInterrupt:
+        return 130
 
 
 if __name__ == "__main__":
