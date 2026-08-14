@@ -19,9 +19,13 @@ configs/cluster/*.env
 # Model caches and downloaded weights must stay outside Git
 model-cache/
 models/
+!configs/models/
+!configs/models/*.yaml
 huggingface-cache/
 *.safetensors
 *.bin
+*.gguf
+*.sif
 
 # Benchmark products (retain only the empty-directory marker)
 results/*
@@ -36,4 +40,3 @@ slurm-*.err
 .DS_Store
 .idea/
 .vscode/
-
