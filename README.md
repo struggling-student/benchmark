@@ -20,14 +20,21 @@
   <img src="https://img.shields.io/badge/contributions-welcome-2ea44f" alt="Contributions welcome">
 </p>
 
-A composable inference-system benchmark that drives the **same Llama models and
-workloads** through either [vLLM](https://docs.vllm.ai/) or
-[llama.cpp](https://github.com/ggml-org/llama.cpp), on **GPU or CPU**, natively or in
-containers. It measures inference-system behavior — latency, throughput, utilization,
-power, and energy — not model quality. It is not an official MLPerf implementation.
+> ⚡ **The same Llama models and workloads — benchmarked through
+> [vLLM](https://docs.vllm.ai/) or [llama.cpp](https://github.com/ggml-org/llama.cpp),
+> on GPU or CPU.**
+
+Measures inference-system behavior — latency, throughput, utilization, power, and
+energy — not model quality. Not an official MLPerf implementation.
 
 **Models:** `meta-llama/Llama-3.1-8B-Instruct` · `meta-llama/Llama-3.2-1B-Instruct`
 **Workloads:** smoke · offline · serving
+
+<div align="center">
+
+**Navigate:** [Quick start](#quick-start-on-a-cluster) · [Architecture](#architecture) · [Documentation](#documentation) · [Repository layout](#repository-layout)
+
+</div>
 
 ---
 
