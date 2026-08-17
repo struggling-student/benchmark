@@ -249,6 +249,11 @@ class ApptainerProvider:
         wrapped = [self._runtime(), "exec", "--cleanenv"]
         if config.hardware_type in {"gpu", "hybrid"}:
             wrapped.append("--nv")
+        # Official llama.cpp OCI images keep their executables and shared
+        # libraries together in /app. Docker supplies the image environment,
+        # while Singularity/Apptainer --cleanenv can discard that search path.
+        if config.backend == "llamacpp":
+            wrapped.extend(("--env", "LD_LIBRARY_PATH=/app"))
         for name, value in _allowed_environment():
             wrapped.extend(("--env", f"{name}={value}"))
         for mount in _mounts(context):

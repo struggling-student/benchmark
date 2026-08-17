@@ -131,6 +131,11 @@ def test_container_providers_pin_images_and_build_safe_argv(
         context,
     )
     assert apptainer[:3] == ["/usr/bin/apptainer", "exec", "--cleanenv"]
+    library_path_index = apptainer.index("LD_LIBRARY_PATH=/app")
+    assert apptainer[library_path_index - 1 : library_path_index + 1] == [
+        "--env",
+        "LD_LIBRARY_PATH=/app",
+    ]
 
 
 class _Tokenizer:
