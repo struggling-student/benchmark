@@ -105,7 +105,11 @@ def _provider_command(
     return get_provider(provider_name).wrap(
         command,
         placeholder,
-        ProviderContext(model_root, model_root.parent, cache_root),
+        # The preparation output lives under model_root, which is already mounted
+        # read-write as the provider run directory.  Mounting model_root.parent as
+        # the read-only artifact root as well creates overlapping binds; Singularity
+        # applies the parent bind last and makes the temporary output read-only.
+        ProviderContext(model_root, None, cache_root),
     )
 
 
