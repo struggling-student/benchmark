@@ -20,6 +20,7 @@ Workloads:
 Profiles:
 
 - `vllm_gpu.yaml`
+- `vllm_cpu_amx_hbm_cache.yaml` (Xeon Max cache-mode vLLM CPU, BF16/AMX first treatment)
 - `llamacpp_cpu.yaml` (portable CPU baseline with automatic ISA dispatch)
 - `llamacpp_cpu_avx2.yaml` (explicit AVX2 build)
 - `llamacpp_cpu_avx512.yaml` (explicit AVX-512 build)
@@ -37,8 +38,9 @@ profile. To measure DDR on the same flat-mode node, copy the relevant profile an
 On CRESCO8, `cresco8-hbm14` is configured in flat mode. Allocation identity is not trusted as the
 only evidence: the benchmark still verifies the topology inside every job before inference starts.
 
-All three providers can execute a compatible profile. Only llama.cpp supports `q8_0` and
-`q4_k_m`; quantized-to-F16 results are descriptive.
+All three providers can execute a compatible profile. Use the `bf16` model variant for the vLLM
+CPU AMX profile. Only llama.cpp supports `q8_0` and `q4_k_m`; quantized-to-F16 results are
+descriptive.
 
 The generic CPU profiles pin 16 threads to mask `0xffff`. Replace the thread count and mask together
 when the allocated CPU topology requires a different placement. The CRESCO8 HBM profiles use all
@@ -55,6 +57,10 @@ is chosen explicitly.
 - `memory_mode`: `none`, `flat`, or `cache`;
 - `memory_binding`: `hbm`, `ddr`, or an explicit numeric NUMA node list. Symbolic tiers are resolved
   from the allocated node's topology and the numeric result is passed to the runtime.
+
+vLLM CPU profiles additionally set the CPU KV-cache allocation, OpenMP core binding, and reserved
+front-end cores. The cache-mode profile uses two tensor-parallel ranks to match the two NUMA nodes
+observed on `cresco8-hbm15`; preflight must confirm that topology again in the actual allocation.
 
 Explicit ISA profiles require a matching ISA-specific runtime variable. Preflight reads the node's
 CPU flags and Linux NUMA sysfs before the backend starts. On Xeon Max it detects flat mode from

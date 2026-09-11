@@ -38,7 +38,7 @@ def test_shipped_manifests_compose_complete_f16_matrix() -> None:
         for profile in profiles
     ]
 
-    assert len(resolved) == 54
+    assert len(resolved) == 60
     assert {item.backend for item in resolved} == {"vllm", "llamacpp"}
     assert {item.benchmark_type for item in resolved} == {"smoke", "offline", "serving"}
     assert all(item.tokenizer == item.model_id for item in resolved)
@@ -59,6 +59,26 @@ def test_cpu_isa_and_hbm_mode_are_part_of_resolved_profile() -> None:
     assert "amx_int8" in config.cpu_features_required
     assert config.memory_type == "hbm2e+ddr5"
     assert config.memory_mode == "cache"
+
+
+def test_vllm_cpu_amx_profile_resolves_bf16_runtime_controls() -> None:
+    config = load_composed_experiment(
+        ROOT / "configs/models/llama32_1b.yaml",
+        ROOT / "configs/workloads/smoke.yaml",
+        ROOT / "configs/profiles/vllm_cpu_amx_hbm_cache.yaml",
+        provider="native",
+        variant="bf16",
+        artifact_root="/models",
+    )
+
+    assert config.backend == "vllm"
+    assert config.hardware_type == "cpu"
+    assert config.dtype == "bfloat16"
+    assert config.cpu_isa_target == "amx"
+    assert config.tensor_parallel_size == 2
+    assert config.vllm_cpu_kvcache_space_gib == 8
+    assert config.vllm_cpu_omp_threads_bind == "auto"
+    assert config.vllm_cpu_num_reserved_cpu == 1
 
 
 def test_flat_single_tier_profile_requires_memory_binding(tmp_path: Path) -> None:

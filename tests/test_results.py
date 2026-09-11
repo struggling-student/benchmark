@@ -282,6 +282,9 @@ def test_cpu_pairs_require_memory_and_placement_controls() -> None:
         "cpu_isa_target": "avx512",
         "cpu_features_required": ["avx512f"],
         "cpu_isa_verified": True,
+        "vllm_cpu_kvcache_space_gib": 8,
+        "vllm_cpu_omp_threads_bind": "auto",
+        "vllm_cpu_num_reserved_cpu": 1,
     }
     left.update(cpu_controls)
     right.update(cpu_controls)
@@ -323,6 +326,9 @@ def test_missing_cpu_placement_evidence_makes_comparison_partial() -> None:
                 "cpu_isa_target": "avx512",
                 "cpu_features_required": ["avx512f"],
                 "cpu_isa_verified": True,
+                "vllm_cpu_kvcache_space_gib": 8,
+                "vllm_cpu_omp_threads_bind": "auto",
+                "vllm_cpu_num_reserved_cpu": 1,
             }
         )
         summary["software_versions"]["cuda_runtime"] = None

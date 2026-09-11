@@ -26,11 +26,19 @@ class VllmAdapter:
     name = "vllm"
 
     def validate(self, config: ExperimentConfig, *, require_artifact: bool = True) -> list[str]:
-        if config.hardware_type != "gpu":
-            raise ConfigurationError("the shipped vLLM adapter requires a GPU profile")
+        if config.hardware_type not in {"cpu", "gpu"}:
+            raise ConfigurationError("the vLLM adapter requires a CPU or GPU profile")
         if config.quantization is not None:
             raise ConfigurationError("the shipped vLLM model variants are unquantized")
-        checks = ["vLLM profile and Hugging Face artifact are compatible"]
+        if (
+            config.hardware_type == "cpu"
+            and config.cpu_isa_target == "amx"
+            and config.dtype != "bfloat16"
+        ):
+            raise ConfigurationError("the vLLM CPU AMX treatment requires dtype bfloat16")
+        checks = [
+            f"vLLM {config.hardware_type} profile and Hugging Face artifact are compatible"
+        ]
         if require_artifact:
             try:
                 from huggingface_hub import snapshot_download

@@ -122,6 +122,44 @@ def test_native_provider_selects_isa_specific_binary_directory(
     assert wrapped[0] == str(binary)
 
 
+def test_native_vllm_cpu_runtime_uses_dedicated_binary_and_profile_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binary = tmp_path / "vllm"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o755)
+    monkeypatch.setenv("VLLM_CPU_BIN", str(binary))
+    monkeypatch.setattr("llm_bench.providers.shutil.which", lambda name: f"/usr/bin/{name}")
+    config = _config(
+        backend="vllm",
+        hardware_type="cpu",
+        artifact_format="huggingface",
+        artifact_path=None,
+        gpu_layers=None,
+        batch_size=None,
+        ubatch_size=None,
+        parallel_slots=None,
+        thread_count=None,
+        cpu_isa_target="amx",
+        cpu_features_required=("amx_tile", "amx_bf16"),
+        vllm_cpu_kvcache_space_gib=8,
+        vllm_cpu_omp_threads_bind="auto",
+        vllm_cpu_num_reserved_cpu=1,
+    )
+
+    wrapped = NativeProvider().wrap(
+        ["vllm", "serve", "test/model"], config, ProviderContext(tmp_path, None, None)
+    )
+
+    assert wrapped[:5] == [
+        "/usr/bin/env",
+        "VLLM_CPU_KVCACHE_SPACE=8",
+        "VLLM_CPU_OMP_THREADS_BIND=auto",
+        "VLLM_CPU_NUM_OF_RESERVED_CPU=1",
+        str(binary),
+    ]
+
+
 def test_container_providers_pin_images_and_build_safe_argv(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -431,6 +469,33 @@ def test_model_preparation_records_revision_hashes_and_quantization(
         artifact_root=tmp_path / "artifacts",
     )
     assert vllm.model_revision == "c" * 40
+
+
+def test_vllm_bf16_preparation_only_caches_the_source_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = load_model_manifest(ROOT / "configs/models/llama32_1b.yaml")
+    snapshot = tmp_path / "cache/models--test/snapshots" / ("d" * 40)
+    snapshot.mkdir(parents=True)
+    monkeypatch.setattr("llm_bench.preparation._snapshot", lambda *args, **kwargs: snapshot)
+
+    def fail_if_called(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("snapshot-only preparation must not run GGUF tools")
+
+    monkeypatch.setattr("llm_bench.preparation._run", fail_if_called)
+
+    manifest = prepare_model(
+        model,
+        provider_name="native",
+        variants=("bf16",),
+        artifact_root=tmp_path / "artifacts",
+        cache_root=tmp_path / "cache",
+    )
+
+    assert manifest["resolved_revision"] == "d" * 40
+    assert manifest["snapshot_path"] == str(snapshot)
+    assert manifest["tool_provenance"] == {"operation": "huggingface_snapshot_only"}
+    assert manifest["artifacts"] == {}
 
 
 def test_dry_run_contains_provider_wrapped_server_argv(

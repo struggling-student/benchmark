@@ -209,7 +209,7 @@ def prepare_model(
     cache_root: str | Path,
     local_files_only: bool = False,
 ) -> dict[str, Any]:
-    """Download once, convert F16 once, and create explicitly requested GGUF variants."""
+    """Cache a model snapshot and create any explicitly requested GGUF variants."""
 
     requested = list(dict.fromkeys(variants))
     if provider_name not in {"native", "docker", "apptainer"}:
@@ -219,11 +219,9 @@ def prepare_model(
     unknown = sorted(set(requested) - set(model.variants))
     if unknown:
         raise ConfigurationError("unknown model variant(s): " + ", ".join(unknown))
-    unsupported = [name for name in requested if "llamacpp" not in model.variants[name].artifacts]
-    if unsupported:
-        raise ConfigurationError(
-            "variant(s) do not define llama.cpp artifacts: " + ", ".join(unsupported)
-        )
+    llamacpp_requested = [
+        name for name in requested if "llamacpp" in model.variants[name].artifacts
+    ]
     root = Path(artifact_root).expanduser().resolve()
     cache = Path(cache_root).expanduser().resolve()
     if not root.is_absolute() or not cache.is_absolute():
@@ -240,6 +238,26 @@ def prepare_model(
     log = model_root / "preparation.log"
     manifest_path = model_root / "artifact-manifest.json"
     previous_manifest = _read_manifest(manifest_path)
+    if not llamacpp_requested:
+        manifest = {
+            "schema_version": "1.0",
+            "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            "model_key": model.model_key,
+            "model_id": model.model_id,
+            "requested_revision": model.model_revision,
+            "resolved_revision": resolved_revision,
+            "tokenizer_id": model.tokenizer_id,
+            "snapshot_path": str(snapshot),
+            "provider": provider_name,
+            "provider_image": None,
+            "tool_provenance": {"operation": "huggingface_snapshot_only"},
+            "artifacts": {},
+        }
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        return manifest
     f16_artifact = model.variants.get("f16")
     if f16_artifact is None or "llamacpp" not in f16_artifact.artifacts:
         raise ConfigurationError("GGUF preparation requires an f16 llama.cpp artifact definition")
@@ -336,7 +354,7 @@ def prepare_model(
                 ],
             }
 
-        for name in requested:
+        for name in llamacpp_requested:
             variant = model.variants[name]
             artifact = variant.artifacts["llamacpp"]
             assert artifact.filename is not None

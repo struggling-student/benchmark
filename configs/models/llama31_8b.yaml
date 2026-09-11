@@ -7,6 +7,12 @@ revision_policy: resolve-and-record
 model_parameter_scale: 8B
 max_model_len: 8192
 variants:
+  bf16:
+    precision: bfloat16
+    quantization: null
+    artifacts:
+      vllm:
+        format: huggingface
   f16:
     precision: float16
     quantization: null

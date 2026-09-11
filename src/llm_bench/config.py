@@ -81,6 +81,9 @@ class ExecutionProfile:
     port: int
     tensor_parallel_size: int
     gpu_memory_utilization: float | None
+    vllm_cpu_kvcache_space_gib: int | None
+    vllm_cpu_omp_threads_bind: str | None
+    vllm_cpu_num_reserved_cpu: int | None
     thread_count: int | None
     thread_count_batch: int | None
     cpu_mask: str | None
@@ -136,6 +139,9 @@ class ExperimentConfig:
     hardware_type: str = "unknown"
     cpu_isa_target: str | None = None
     cpu_features_required: tuple[str, ...] = ()
+    vllm_cpu_kvcache_space_gib: int | None = None
+    vllm_cpu_omp_threads_bind: str | None = None
+    vllm_cpu_num_reserved_cpu: int | None = None
     host: str = "127.0.0.1"
     port: int = 8000
     thread_count: int | None = None
@@ -416,6 +422,9 @@ def load_execution_profile(path: str | Path) -> ExecutionProfile:
             "port",
             "tensor_parallel_size",
             "gpu_memory_utilization",
+            "vllm_cpu_kvcache_space_gib",
+            "vllm_cpu_omp_threads_bind",
+            "vllm_cpu_num_reserved_cpu",
             "thread_count",
             "thread_count_batch",
             "cpu_mask",
@@ -467,6 +476,17 @@ def load_execution_profile(path: str | Path) -> ExecutionProfile:
             "tensor_parallel_size", data.get("tensor_parallel_size", 1)
         ),
         gpu_memory_utilization=gpu_memory,
+        vllm_cpu_kvcache_space_gib=_optional_integer(
+            "vllm_cpu_kvcache_space_gib", data.get("vllm_cpu_kvcache_space_gib")
+        ),
+        vllm_cpu_omp_threads_bind=_optional_string(
+            "vllm_cpu_omp_threads_bind", data.get("vllm_cpu_omp_threads_bind")
+        ),
+        vllm_cpu_num_reserved_cpu=_optional_integer(
+            "vllm_cpu_num_reserved_cpu",
+            data.get("vllm_cpu_num_reserved_cpu"),
+            0,
+        ),
         thread_count=_optional_integer("thread_count", data.get("thread_count")),
         thread_count_batch=_optional_integer(
             "thread_count_batch", data.get("thread_count_batch")
@@ -497,8 +517,26 @@ def load_execution_profile(path: str | Path) -> ExecutionProfile:
         )
     ):
         raise ConfigurationError("vLLM profiles cannot contain llama.cpp execution controls")
-    if backend == "vllm" and hardware != "gpu":
-        raise ConfigurationError("vLLM profiles require hardware_type: gpu")
+    if backend == "vllm" and hardware == "hybrid":
+        raise ConfigurationError("vLLM profiles support hardware_type: cpu or gpu")
+    vllm_cpu_controls = (
+        profile.vllm_cpu_kvcache_space_gib,
+        profile.vllm_cpu_omp_threads_bind,
+        profile.vllm_cpu_num_reserved_cpu,
+    )
+    if (backend, hardware) != ("vllm", "cpu") and any(
+        value is not None for value in vllm_cpu_controls
+    ):
+        raise ConfigurationError("vLLM CPU controls require a vLLM CPU profile")
+    if backend == "vllm" and hardware == "cpu" and any(
+        value is None for value in vllm_cpu_controls
+    ):
+        raise ConfigurationError(
+            "vLLM CPU profiles require explicit KV-cache, OpenMP binding, "
+            "and reserved-core controls"
+        )
+    if backend == "vllm" and hardware == "cpu" and gpu_memory is not None:
+        raise ConfigurationError("vLLM CPU profiles cannot set gpu_memory_utilization")
     if hardware == "cpu" and cpu_isa is None:
         raise ConfigurationError("CPU profiles require an explicit cpu_isa target")
     if hardware == "gpu" and (cpu_isa is not None or cpu_features_required):
@@ -631,6 +669,9 @@ def resolve_experiment(
         hardware_type=profile.hardware_type,
         cpu_isa_target=profile.cpu_isa,
         cpu_features_required=profile.cpu_features_required,
+        vllm_cpu_kvcache_space_gib=profile.vllm_cpu_kvcache_space_gib,
+        vllm_cpu_omp_threads_bind=profile.vllm_cpu_omp_threads_bind,
+        vllm_cpu_num_reserved_cpu=profile.vllm_cpu_num_reserved_cpu,
         host=profile.host,
         port=profile.port,
         thread_count=profile.thread_count,

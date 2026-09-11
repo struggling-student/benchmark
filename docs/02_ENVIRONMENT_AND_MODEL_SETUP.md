@@ -25,7 +25,9 @@ Provider selection changes command execution, not the model or workload definiti
 
 ### Native
 
-For vLLM, put `vllm` on `PATH` or set `VLLM_BIN` to its executable. For llama.cpp, provide a build
+For GPU vLLM, put `vllm` on `PATH` or set `VLLM_BIN` to its executable. CPU vLLM must set
+`VLLM_CPU_BIN` to the executable in a CPU-only environment so a CUDA build cannot be selected
+silently. For llama.cpp, provide a build
 whose tools match each other:
 
 ```bash
@@ -51,6 +53,11 @@ build's CMake cache or build log with the campaign records.
 
 The runner invokes argv directly. YAML files cannot inject arbitrary shell commands.
 
+The shipped `vllm_cpu_amx_hbm_cache.yaml` profile configures the vLLM CPU KV-cache size, automatic
+OpenMP binding, and reserved cores per tensor-parallel rank. The provider injects these as
+`VLLM_CPU_KVCACHE_SPACE`, `VLLM_CPU_OMP_THREADS_BIND`, and
+`VLLM_CPU_NUM_OF_RESERVED_CPU` for native, Docker, and Apptainer execution.
+
 ### Docker
 
 Set the image for each backend used. OCI references must be immutable digest references:
@@ -58,6 +65,7 @@ Set the image for each backend used. OCI references must be immutable digest ref
 ```bash
 export LLAMA_CPP_DOCKER_IMAGE='ghcr.io/ggml-org/llama.cpp:full@sha256:<DIGEST>'
 export VLLM_DOCKER_IMAGE='<REGISTRY>/<VLLM_IMAGE>@sha256:<DIGEST>'
+export VLLM_CPU_DOCKER_IMAGE='<REGISTRY>/<VLLM_CPU_IMAGE>@sha256:<DIGEST>'
 ```
 
 For explicit CPU ISA profiles, use the corresponding immutable image variables:
@@ -76,6 +84,7 @@ Either a pinned `docker://...@sha256:<digest>` URI or an existing local SIF path
 ```bash
 export LLAMA_CPP_APPTAINER_IMAGE='docker://ghcr.io/ggml-org/llama.cpp:full@sha256:<DIGEST>'
 export VLLM_APPTAINER_IMAGE='/absolute/path/to/vllm.sif'
+export VLLM_CPU_APPTAINER_IMAGE='/absolute/path/to/vllm-cpu.sif'
 ```
 
 Runs use a clean environment, explicit binds, and `--nv` only for GPU/hybrid profiles. Local image
@@ -95,6 +104,17 @@ export HF_TOKEN
 
 Do not write the token into the repository or cluster environment file. Preparation resolves the
 configured revision, downloads the snapshot into `MODEL_CACHE_DIR`, and records the immutable commit.
+
+For the first vLLM CPU run, cache the BF16 source snapshot without GGUF conversion:
+
+```bash
+llm-bench prepare-model \
+  --model configs/models/llama32_1b.yaml \
+  --provider native \
+  --variants bf16 \
+  --artifact-root "$MODEL_ARTIFACT_ROOT" \
+  --cache-root "$MODEL_CACHE_DIR"
+```
 
 ## Prepare GGUF variants
 

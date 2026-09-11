@@ -66,6 +66,23 @@ def _allowed_environment() -> list[tuple[str, str]]:
     return [(name, os.environ[name]) for name in _ENVIRONMENT_ALLOWLIST if name in os.environ]
 
 
+def _profile_environment(config: ExperimentConfig) -> list[tuple[str, str]]:
+    if config.backend != "vllm" or config.hardware_type != "cpu":
+        return []
+    values = {
+        "VLLM_CPU_KVCACHE_SPACE": config.vllm_cpu_kvcache_space_gib,
+        "VLLM_CPU_OMP_THREADS_BIND": config.vllm_cpu_omp_threads_bind,
+        "VLLM_CPU_NUM_OF_RESERVED_CPU": config.vllm_cpu_num_reserved_cpu,
+    }
+    return [(name, str(value)) for name, value in values.items() if value is not None]
+
+
+def _container_environment(config: ExperimentConfig) -> list[tuple[str, str]]:
+    values = dict(_allowed_environment())
+    values.update(_profile_environment(config))
+    return list(values.items())
+
+
 def _memory_prefix(config: ExperimentConfig) -> list[str]:
     memory_binding = resolve_memory_binding(config)
     if not memory_binding:
@@ -92,6 +109,20 @@ def llama_cpp_runtime_variable(config: ExperimentConfig, kind: str) -> str:
     if target and target != "auto":
         return f"LLAMA_CPP_{target.upper()}_{suffix}"
     return f"LLAMA_CPP_{suffix}"
+
+
+def vllm_runtime_variable(config: ExperimentConfig, kind: str) -> str:
+    suffixes = {
+        "bin": "BIN",
+        "docker_image": "DOCKER_IMAGE",
+        "apptainer_image": "APPTAINER_IMAGE",
+    }
+    try:
+        suffix = suffixes[kind]
+    except KeyError as exc:
+        raise ValueError(f"unknown vLLM runtime variable kind: {kind}") from exc
+    prefix = "VLLM_CPU" if config.hardware_type == "cpu" else "VLLM"
+    return f"{prefix}_{suffix}"
 
 
 def _container_command(command: list[str], config: ExperimentConfig) -> list[str]:
@@ -124,13 +155,18 @@ class NativeProvider:
                 if candidate.is_file() and os.access(candidate, os.X_OK)
                 else None
             )
-        if config.backend == "vllm" and command == "vllm" and os.environ.get("VLLM_BIN"):
-            candidate = Path(os.environ["VLLM_BIN"]).expanduser()
-            return (
-                str(candidate.resolve())
-                if candidate.is_file() and os.access(candidate, os.X_OK)
-                else None
-            )
+        if config.backend == "vllm" and command == "vllm":
+            variable = vllm_runtime_variable(config, "bin")
+            configured = os.environ.get(variable)
+            if configured:
+                candidate = Path(configured).expanduser()
+                return (
+                    str(candidate.resolve())
+                    if candidate.is_file() and os.access(candidate, os.X_OK)
+                    else None
+                )
+            if config.hardware_type == "cpu":
+                return None
         return shutil.which(command)
 
     def validate(self, config: ExperimentConfig) -> list[str]:
@@ -182,6 +218,11 @@ class NativeProvider:
         if resolved is None:
             raise ConfigurationError(f"native executable unavailable: {command[0]}")
         wrapped = [resolved, *command[1:]]
+        if environment := _profile_environment(config):
+            env = shutil.which("env")
+            if env is None:
+                raise ConfigurationError("profile runtime environment requires the env executable")
+            wrapped = [env, *(f"{name}={value}" for name, value in environment), *wrapped]
         wrapped = [*_memory_prefix(config), *wrapped]
         return wrapped
 
@@ -191,7 +232,7 @@ class DockerProvider:
 
     def _image(self, config: ExperimentConfig) -> str:
         variable = (
-            "VLLM_DOCKER_IMAGE"
+            vllm_runtime_variable(config, "docker_image")
             if config.backend == "vllm"
             else llama_cpp_runtime_variable(config, "docker_image")
         )
@@ -227,8 +268,8 @@ class DockerProvider:
                 else "all"
             )
             wrapped.extend(("--gpus", gpu_selection))
-        for name, _value in _allowed_environment():
-            wrapped.extend(("--env", name))
+        for name, value in _container_environment(config):
+            wrapped.extend(("--env", f"{name}={value}"))
         if server:
             wrapped.extend(("-p", f"{config_port(config)}:{config_port(config)}"))
             if "--host" in command:
@@ -256,7 +297,7 @@ class ApptainerProvider:
 
     def _image(self, config: ExperimentConfig) -> str:
         variable = (
-            "VLLM_APPTAINER_IMAGE"
+            vllm_runtime_variable(config, "apptainer_image")
             if config.backend == "vllm"
             else llama_cpp_runtime_variable(config, "apptainer_image")
         )
@@ -290,7 +331,7 @@ class ApptainerProvider:
         # while Singularity/Apptainer --cleanenv can discard that search path.
         if config.backend == "llamacpp":
             wrapped.extend(("--env", "LD_LIBRARY_PATH=/app"))
-        for name, value in _allowed_environment():
+        for name, value in _container_environment(config):
             wrapped.extend(("--env", f"{name}={value}"))
         for mount in _mounts(context):
             suffix = ":ro" if mount.read_only else ":rw"

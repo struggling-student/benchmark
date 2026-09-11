@@ -74,6 +74,9 @@ SUMMARY_FIELDS = (
     "numa_policy",
     "memory_binding",
     "memory_binding_resolved",
+    "vllm_cpu_kvcache_space_gib",
+    "vllm_cpu_omp_threads_bind",
+    "vllm_cpu_num_reserved_cpu",
     "memory_type",
     "memory_mode",
     "memory_mode_requested",
@@ -269,6 +272,9 @@ CPU_COMPATIBILITY_FIELDS = (
 # legacy summaries compatible while preventing a newly recorded control from being ignored.
 OPTIONAL_COMPATIBILITY_FIELDS = (
     "batch_size",
+    "vllm_cpu_kvcache_space_gib",
+    "vllm_cpu_omp_threads_bind",
+    "vllm_cpu_num_reserved_cpu",
     "execution_provider",
     "measurement_method",
     "measurement_scope",
@@ -460,6 +466,9 @@ def create_summary(
         "socket_count",
         "numa_node_count",
         "memory_binding_resolved",
+        "vllm_cpu_kvcache_space_gib",
+        "vllm_cpu_omp_threads_bind",
+        "vllm_cpu_num_reserved_cpu",
         "memory_type",
         "memory_mode",
         "memory_mode_requested",
@@ -530,6 +539,9 @@ def create_summary(
             "cpu_mask": config.cpu_mask,
             "numa_policy": config.numa_policy,
             "memory_binding": config.memory_binding,
+            "vllm_cpu_kvcache_space_gib": config.vllm_cpu_kvcache_space_gib,
+            "vllm_cpu_omp_threads_bind": config.vllm_cpu_omp_threads_bind,
+            "vllm_cpu_num_reserved_cpu": config.vllm_cpu_num_reserved_cpu,
             "memory_type": config.memory_type,
             "memory_mode": config.memory_mode,
             "cpu_isa_target": config.cpu_isa_target,
@@ -1191,6 +1203,15 @@ def _matching_null_is_meaningful(
         return True
     if field == "cpu_isa_verified" and all(
         summary.get("cpu_isa_target") in {None, "auto"} for summary in (left, right)
+    ):
+        return True
+    if field in {
+        "vllm_cpu_kvcache_space_gib",
+        "vllm_cpu_omp_threads_bind",
+        "vllm_cpu_num_reserved_cpu",
+    } and all(
+        (summary.get("backend"), summary.get("hardware_type")) != ("vllm", "cpu")
+        for summary in (left, right)
     ):
         return True
     both_non_gpu = left.get("hardware_type") != "gpu" and right.get("hardware_type") != "gpu"

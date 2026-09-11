@@ -21,7 +21,7 @@ from uuid import uuid4
 from . import __version__
 from .config import ExperimentConfig
 from .hardware import inspect_hardware, lscpu_values, resolve_memory_binding
-from .providers import llama_cpp_runtime_variable
+from .providers import llama_cpp_runtime_variable, vllm_runtime_variable
 
 
 def utc_timestamp() -> str:
@@ -266,8 +266,9 @@ def collect_metadata(
     native_binary_path: str | None = None
     if config.backend == "vllm":
         backend_version = _package_version("vllm")
-        vllm_executable = os.environ.get("VLLM_BIN") or "vllm"
-        runtime_environment_variable = "VLLM_BIN" if os.environ.get("VLLM_BIN") else None
+        binary_variable = vllm_runtime_variable(config, "bin")
+        vllm_executable = os.environ.get(binary_variable) or "vllm"
+        runtime_environment_variable = binary_variable
         if config.provider == "native":
             native_binary_path = shutil.which(vllm_executable)
         native_binary_version = (
@@ -308,7 +309,7 @@ def collect_metadata(
     container_image = None
     if config.provider == "docker":
         variable = (
-            "VLLM_DOCKER_IMAGE"
+            vllm_runtime_variable(config, "docker_image")
             if config.backend == "vllm"
             else llama_cpp_runtime_variable(config, "docker_image")
         )
@@ -316,7 +317,7 @@ def collect_metadata(
         container_image = os.environ.get(variable)
     elif config.provider == "apptainer":
         variable = (
-            "VLLM_APPTAINER_IMAGE"
+            vllm_runtime_variable(config, "apptainer_image")
             if config.backend == "vllm"
             else llama_cpp_runtime_variable(config, "apptainer_image")
         )
@@ -407,6 +408,9 @@ def collect_metadata(
         "numa_policy": config.numa_policy,
         "memory_binding": config.memory_binding,
         "memory_binding_resolved": memory_binding_resolved,
+        "vllm_cpu_kvcache_space_gib": config.vllm_cpu_kvcache_space_gib,
+        "vllm_cpu_omp_threads_bind": config.vllm_cpu_omp_threads_bind,
+        "vllm_cpu_num_reserved_cpu": config.vllm_cpu_num_reserved_cpu,
         "memory_type": config.memory_type,
         "memory_mode": config.memory_mode,
         "memory_mode_requested": hardware["memory_mode_requested"],
@@ -417,8 +421,16 @@ def collect_metadata(
         "numa_nodes": hardware["numa_nodes"],
         "hbm_numa_nodes": hardware["hbm_numa_nodes"],
         "ddr_numa_nodes": hardware["ddr_numa_nodes"],
-        "thread_affinity": config.cpu_mask,
-        "process_count": 1,
+        "thread_affinity": (
+            config.vllm_cpu_omp_threads_bind
+            if config.backend == "vllm" and config.hardware_type == "cpu"
+            else config.cpu_mask
+        ),
+        "process_count": (
+            config.tensor_parallel_size
+            if config.backend == "vllm" and config.hardware_type == "cpu"
+            else 1
+        ),
         "cpu_isa": hardware["cpu_isa"],
         "cpu_isa_target": hardware["cpu_isa_target"],
         "cpu_features_required": hardware["cpu_features_required"],
