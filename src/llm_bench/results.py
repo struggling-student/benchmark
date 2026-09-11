@@ -39,6 +39,8 @@ SUMMARY_FIELDS = (
     "container_image_digest",
     "container_id",
     "native_binary_version",
+    "native_binary_path",
+    "runtime_environment_variable",
     "measurement_method",
     "measurement_scope",
     "workload_manifest_sha256",
@@ -71,12 +73,25 @@ SUMMARY_FIELDS = (
     "cpu_mask",
     "numa_policy",
     "memory_binding",
+    "memory_binding_resolved",
     "memory_type",
     "memory_mode",
+    "memory_mode_requested",
+    "memory_mode_detected",
+    "memory_mode_detection_method",
+    "memory_mode_verified",
     "memory_capacity_gib",
+    "numa_nodes",
+    "hbm_numa_nodes",
+    "ddr_numa_nodes",
     "thread_affinity",
     "process_count",
     "cpu_isa",
+    "cpu_isa_target",
+    "cpu_features_required",
+    "cpu_features_detected",
+    "cpu_features_missing",
+    "cpu_isa_verified",
     "gpu_layers",
     "batch_size",
     "ubatch_size",
@@ -236,12 +251,18 @@ COMPATIBILITY_FIELDS = (
 CPU_COMPATIBILITY_FIELDS = (
     "memory_type",
     "memory_mode",
+    "memory_mode_detected",
+    "memory_mode_verified",
     "thread_count",
     "thread_affinity",
     "process_count",
     "numa_policy",
     "memory_binding",
+    "memory_binding_resolved",
     "cpu_isa",
+    "cpu_isa_target",
+    "cpu_features_required",
+    "cpu_isa_verified",
 )
 
 # Optional workload dimensions participate as soon as either side records them.  This keeps
@@ -415,6 +436,8 @@ def create_summary(
         "container_image_digest",
         "container_id",
         "native_binary_version",
+        "native_binary_path",
+        "runtime_environment_variable",
         "measurement_method",
         "measurement_scope",
         "workload_manifest_sha256",
@@ -436,12 +459,25 @@ def create_summary(
         "cpu_model",
         "socket_count",
         "numa_node_count",
+        "memory_binding_resolved",
         "memory_type",
         "memory_mode",
+        "memory_mode_requested",
+        "memory_mode_detected",
+        "memory_mode_detection_method",
+        "memory_mode_verified",
         "memory_capacity_gib",
+        "numa_nodes",
+        "hbm_numa_nodes",
+        "ddr_numa_nodes",
         "thread_affinity",
         "process_count",
         "cpu_isa",
+        "cpu_isa_target",
+        "cpu_features_required",
+        "cpu_features_detected",
+        "cpu_features_missing",
+        "cpu_isa_verified",
         "telemetry_scope",
         "energy_scope",
         "instrumentation_boundary",
@@ -494,6 +530,12 @@ def create_summary(
             "cpu_mask": config.cpu_mask,
             "numa_policy": config.numa_policy,
             "memory_binding": config.memory_binding,
+            "memory_type": config.memory_type,
+            "memory_mode": config.memory_mode,
+            "cpu_isa_target": config.cpu_isa_target,
+            "cpu_features_required": metadata.get(
+                "cpu_features_required", list(config.cpu_features_required)
+            ),
             "gpu_layers": config.gpu_layers,
             "batch_size": config.batch_size,
             "ubatch_size": config.ubatch_size,
@@ -1143,12 +1185,21 @@ def _matching_null_is_meaningful(
 ) -> bool:
     if field in _NULL_IS_MEANINGFUL:
         return True
+    if field in {"memory_mode_detected", "memory_mode_verified"} and all(
+        summary.get("memory_mode") not in {"flat", "cache"} for summary in (left, right)
+    ):
+        return True
+    if field == "cpu_isa_verified" and all(
+        summary.get("cpu_isa_target") in {None, "auto"} for summary in (left, right)
+    ):
+        return True
     both_non_gpu = left.get("hardware_type") != "gpu" and right.get("hardware_type") != "gpu"
     return both_non_gpu and field in {
         "accelerator_name",
         "software_versions.cuda_runtime",
         "software_versions.nvidia_driver",
         "memory_binding",
+        "memory_binding_resolved",
     }
 
 

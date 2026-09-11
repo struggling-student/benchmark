@@ -106,6 +106,22 @@ def test_native_provider_uses_configured_binary_directory(
     )[0] == str(binary)
 
 
+def test_native_provider_selects_isa_specific_binary_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binary = tmp_path / "llama-server"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o755)
+    monkeypatch.setenv("LLAMA_CPP_AMX_BIN_DIR", str(tmp_path))
+    config = _config(cpu_isa_target="amx", cpu_features_required=("amx_int8",))
+
+    wrapped = NativeProvider().wrap(
+        ["llama-server", "--version"], config, ProviderContext(tmp_path, None, None)
+    )
+
+    assert wrapped[0] == str(binary)
+
+
 def test_container_providers_pin_images_and_build_safe_argv(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -136,6 +152,26 @@ def test_container_providers_pin_images_and_build_safe_argv(
         "--env",
         "LD_LIBRARY_PATH=/app",
     ]
+
+
+def test_docker_uses_container_memory_node_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(provider="docker", memory_binding="2,3")
+    monkeypatch.setenv(
+        "LLAMA_CPP_DOCKER_IMAGE", "ghcr.io/ggml-org/llama.cpp:server@sha256:" + "a" * 64
+    )
+    monkeypatch.setattr("llm_bench.providers.shutil.which", lambda name: f"/usr/bin/{name}")
+
+    wrapped = DockerProvider().wrap(
+        ["llama-server", "--host", "127.0.0.1"],
+        config,
+        ProviderContext(tmp_path, Path("/models"), None, "bench-container"),
+        server=True,
+    )
+
+    assert wrapped[:3] == ["docker", "run", "--rm"]
+    assert wrapped[wrapped.index("--cpuset-mems") + 1] == "2,3"
 
 
 class _Tokenizer:

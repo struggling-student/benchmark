@@ -109,6 +109,26 @@ module spider cuda 2>/dev/null || true
 
 `module spider` is not supported by every module system. `module avail` and the site documentation are the fallback. Record the exact commands needed to recreate the chosen environment; those commands become `MODULE_COMMANDS` in the local cluster configuration.
 
+## Step 3a: discover CPU, ISA, and HBM resources
+
+Do this inside the CPU allocation that will run inference, not on a login node:
+
+```bash
+lscpu
+numactl --hardware
+```
+
+Record the CPU model, sockets, cores, CPU flags, NUMA node CPU lists, and memory capacity per
+node. For Xeon CPU Max, flat mode exposes HBM and DDR as separate NUMA memory nodes, while cache
+mode exposes DDR and uses HBM as a transparent cache. NUMA node numbers depend on firmware and
+SNC configuration, so never copy them from another machine or from this repository's examples.
+
+The benchmark verifies `avx2`, `avx512`, and `amx` profile requirements against `lscpu` flags.
+For a flat-mode run, use `memory_binding: hbm` or `memory_binding: ddr`; preflight resolves the
+symbolic tier to the addressable NUMA nodes discovered inside the allocation and records both the
+requested and numeric binding. An explicit numeric node list remains supported when needed. Cache
+mode has no separately addressable HBM nodes and therefore uses no HBM binding.
+
 ## Step 4: inspect Python, CUDA, and the NVIDIA driver
 
 Perform these checks both before and after loading any candidate modules:

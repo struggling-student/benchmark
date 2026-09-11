@@ -1,17 +1,21 @@
-# 05 — CPU-HBM roadmap
+# 05 — CPU-HBM implementation and campaign roadmap
 
-The repository now has a real llama.cpp CPU path, including CPU execution profiles, native/container
-providers, process-tree telemetry, RAPL package-power sampling where permitted, and CPU-aware result
-and dashboard fields. That establishes an ordinary CPU-memory baseline. The remaining thesis step is
-to run it on a suitable CPU-HBM platform and add platform-specific memory placement verification.
+The repository has a llama.cpp CPU path, ISA-specific runtime selection, Xeon Max HBM mode
+verification, native/container providers, process-tree telemetry, RAPL package-power sampling where
+permitted, and CPU-aware result fields. The remaining thesis work is cluster validation and the
+formal campaign.
 
 ## What is implemented now
 
 - The same two model manifests and smoke/offline/serving workloads compose with vLLM GPU,
   llama.cpp CPU, and llama.cpp CUDA/hybrid profiles.
 - Shared API workloads use identical persisted prompts and generation controls.
-- CPU profiles record threads, batch threads, affinity mask, NUMA policy, memory binding, batch and
-  microbatch sizes, parallel slots, and GPU offload layers.
+- CPU profiles record the requested ISA and exact required feature flags, threads, batch threads,
+  affinity mask, NUMA policy, memory binding, batch and microbatch sizes, parallel slots, and GPU
+  offload layers.
+- Explicit AVX2, AVX-512, and AMX treatments select separate llama.cpp builds/images.
+- Xeon Max preflight detects flat/cache mode from Linux NUMA topology and rejects a mismatch before
+  inference. Flat-mode HBM/DDR bindings are checked against detected memory-only/CPU-bearing nodes.
 - CPU utilization/RSS and optional package power share schema 2.0 with GPU telemetry.
 - The dashboard understands CPU/GPU/hybrid runs and has a simulated DDR/HBM presentation contract
   for fields that cannot yet be measured on the available cluster.
@@ -52,10 +56,17 @@ selected and verified. To interpret HBM as the treatment, hold constant wherever
 - prompt/output lengths, batch/microbatch, slots, rate, and concurrency;
 - warm-up/cache policy and instrumentation boundary.
 
-Add platform adapters only for facts the machine can prove: HBM/DDR mode, flat/cache mode, effective
-allocation nodes, capacity, achieved bandwidth, and memory-controller evidence. Missing permissions
-remain null with warnings. A requested `numactl` policy is not proof that pages landed in HBM; formal
-runs need an effective-placement check from the target platform.
+The current platform adapter proves the configured Xeon Max flat/cache mode and validates the NUMA
+node class named by a flat-mode binding. It does not yet prove page residency or achieved HBM
+bandwidth. Add those measurements only when the cluster session can validate the required tooling;
+missing permissions remain null with warnings. A requested `numactl` policy is not proof that every
+page landed in HBM, so formal flat-mode runs still need effective-placement evidence.
+
+The CRESCO8 discovery performed before implementation found Xeon CPU Max 9480 nodes with 112 physical
+cores and AVX2, AVX-512 BF16/VNNI, and AMX BF16/INT8/TILE flags. `cresco8-hbm15` exposed a two-node,
+DDR-capacity NUMA topology consistent with cache mode; `cresco8-hbm14` is configured in flat mode.
+These node identities guide profile selection but do not replace evidence: re-run preflight inside
+every allocation so the requested mode and symbolic HBM/DDR binding are verified at execution time.
 
 Prefill and decode should be analyzed separately when supported. Prefill exposes broad matrix
 parallelism, while autoregressive decode repeatedly reads weights and KV-cache state and can be more
@@ -76,3 +87,9 @@ cross-machine or cross-instrumentation results comparable.
 MLPerf remains a separate possible later phase. A compliant effort would need the then-current rules,
 approved implementation, accuracy methodology, LoadGen scenarios, audit process, and submission
 requirements. These benchmark results must not be represented as official MLPerf results.
+
+## Upstream references
+
+- [Intel Xeon CPU Max memory modes](https://www.intel.com/content/www/us/en/developer/articles/technical/xeon-scalable-processor-max-series.html)
+- [Intel Xeon CPU Max configuration and tuning guide](https://cdrdv2-public.intel.com/787743/354227-intel-xeon-cpu-max-series-configuration-and-tuning-guide-rev3.pdf)
+- [llama.cpp CPU/ISA/HBM CMake options](https://github.com/ggml-org/llama.cpp/blob/master/ggml/CMakeLists.txt)

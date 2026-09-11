@@ -1,0 +1,27 @@
+schema_version: "2.0"
+profile_name: llamacpp_cpu_amx_hbm_cache
+backend: llamacpp
+hardware_type: cpu
+cpu_isa: amx
+cpu_features_required:
+  - avx512f
+  - avx512_vnni
+  - avx512_bf16
+  - amx_tile
+  - amx_int8
+  - amx_bf16
+host: 127.0.0.1
+port: 8080
+tensor_parallel_size: 1
+gpu_memory_utilization: null
+thread_count: 112
+thread_count_batch: 112
+cpu_mask: null
+numa_policy: null
+memory_binding: null
+memory_type: hbm2e+ddr5
+memory_mode: cache
+gpu_layers: 0
+batch_size: 512
+ubatch_size: 512
+parallel_slots: 8

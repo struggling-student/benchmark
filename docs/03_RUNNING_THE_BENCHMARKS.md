@@ -20,14 +20,47 @@ Workloads:
 Profiles:
 
 - `vllm_gpu.yaml`
-- `llamacpp_cpu.yaml`
+- `llamacpp_cpu.yaml` (portable CPU baseline with automatic ISA dispatch)
+- `llamacpp_cpu_avx2.yaml` (explicit AVX2 build)
+- `llamacpp_cpu_avx512.yaml` (explicit AVX-512 build)
+- `llamacpp_cpu_avx512_hbm_flat.yaml` (Xeon Max flat-mode HBM placement)
+- `llamacpp_cpu_amx_hbm_flat.yaml` (Xeon Max flat-mode HBM placement)
+- `llamacpp_cpu_avx512_hbm_cache.yaml` (CRESCO8 Xeon Max cache-mode AVX-512 treatment)
+- `llamacpp_cpu_amx_hbm_cache.yaml` (CRESCO8 Xeon Max cache-mode AMX treatment)
 - `llamacpp_cuda.yaml` (change `gpu_layers` from `all` to a number for partial offload).
+
+The two flat profiles use `memory_binding: hbm`. At preflight and launch time this is resolved to
+the memory-only NUMA nodes discovered in that allocation; numeric node IDs are never assumed by the
+profile. To measure DDR on the same flat-mode node, copy the relevant profile and change
+`memory_type` to `ddr5` and `memory_binding` to `ddr`.
+
+On CRESCO8, `cresco8-hbm14` is configured in flat mode. Allocation identity is not trusted as the
+only evidence: the benchmark still verifies the topology inside every job before inference starts.
 
 All three providers can execute a compatible profile. Only llama.cpp supports `q8_0` and
 `q4_k_m`; quantized-to-F16 results are descriptive.
 
-The example CPU profile pins 16 threads to mask `0xffff`. Replace the thread count and mask together
-when the allocated CPU topology requires a different placement.
+The generic CPU profiles pin 16 threads to mask `0xffff`. Replace the thread count and mask together
+when the allocated CPU topology requires a different placement. The CRESCO8 HBM profiles use all
+112 physical cores and leave affinity/NUMA policy unset until the campaign's socket-placement design
+is chosen explicitly.
+
+## Hardware profile contract
+
+`hardware_type` selects `cpu`, `gpu`, or `hybrid`. CPU profiles also configure:
+
+- `cpu_isa`: `auto`, `avx2`, `avx512`, or `amx`;
+- `cpu_features_required`: extra Linux CPU flags required by that exact build/treatment;
+- `memory_type`: a descriptive tier such as `system_memory`, `hbm2e`, or `hbm2e+ddr5`;
+- `memory_mode`: `none`, `flat`, or `cache`;
+- `memory_binding`: `hbm`, `ddr`, or an explicit numeric NUMA node list. Symbolic tiers are resolved
+  from the allocated node's topology and the numeric result is passed to the runtime.
+
+Explicit ISA profiles require a matching ISA-specific runtime variable. Preflight reads the node's
+CPU flags and Linux NUMA sysfs before the backend starts. On Xeon Max it detects flat mode from
+separate CPU-less HBM NUMA nodes and cache mode from HBM being hidden behind DDR. A mismatch aborts
+the run before inference; requested/detected modes, detection method, CPU flags, and the full NUMA
+inventory are retained in metadata and the summary.
 
 ## Resolve and inspect
 
@@ -48,8 +81,9 @@ llm-bench preflight "${COMMON[@]}"
 llm-bench run --dry-run "${COMMON[@]}"
 ```
 
-Dry-run performs no inference. It resolves the artifact, checks the provider and backend, exposes
-telemetry capabilities, determines mounts/ports/GPU flags, and prints the exact argv as JSON.
+Dry-run performs no inference. It resolves the artifact, checks the provider, backend, CPU ISA and
+HBM topology, exposes telemetry capabilities, determines mounts/ports/GPU flags, and prints the exact
+argv and hardware evidence as JSON. Run it inside the same Slurm allocation intended for inference.
 
 ## Run locally or inside an allocation
 

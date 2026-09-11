@@ -143,20 +143,27 @@ llm-bench dashboard --results-root "$RESULTS_ROOT"
 
 ## Architecture
 
-Experiments are composed at the CLI from four orthogonal inputs; changing a model or
-workload is a config-only change:
+Experiments are composed at the CLI from four orthogonal inputs; changing a model,
+workload, CPU/GPU target, CPU ISA, or HBM mode is a config-only change:
 
 | Input | Purpose | Example |
 | --- | --- | --- |
 | `--model` | Canonical HF identity, revision policy, per-backend artifact variants | `configs/models/llama32_1b.yaml` |
 | `--workload` | Smoke / offline / serving request shapes and controls | `configs/workloads/smoke.yaml` |
-| `--profile` | vLLM GPU or llama.cpp CPU/CUDA placement | `configs/profiles/vllm_gpu.yaml` |
+| `--profile` | Device, backend, ISA, NUMA, and HBM placement | `configs/profiles/vllm_gpu.yaml` |
 | `--provider` | `native` · `docker` · `apptainer` | `--provider native` |
 
 `f16` is available to both backends; `q8_0` and `q4_k_m` are llama.cpp-only. Smoke and
 serving runs share one OpenAI-compatible streaming client; offline runs keep the native
 tools (`vllm bench throughput`, `llama-bench`), whose measurement scopes differ, so
 cross-backend offline results are descriptive, never controlled ratios.
+
+CPU profiles can select `auto`, `avx2`, `avx512`, or `amx`. Explicit ISA targets use
+separate llama.cpp runtime variables (for example, `LLAMA_CPP_AMX_BIN_DIR`) and are checked
+against the execution node's CPU flags. Xeon Max HBM profiles declare `memory_mode: flat`
+or `cache`; preflight rejects a mode mismatch and records the detected NUMA topology. Flat-mode
+profiles can request the symbolic `hbm` or `ddr` tier, which is resolved to numeric NUMA nodes only
+after the allocation is active.
 
 ## Documentation
 

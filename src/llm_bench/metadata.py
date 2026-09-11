@@ -9,6 +9,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import socket
 import subprocess
 from collections.abc import Sequence
@@ -19,6 +20,8 @@ from uuid import uuid4
 
 from . import __version__
 from .config import ExperimentConfig
+from .hardware import inspect_hardware, lscpu_values, resolve_memory_binding
+from .providers import llama_cpp_runtime_variable
 
 
 def utc_timestamp() -> str:
@@ -69,29 +72,6 @@ def _file_sha256(path: Path) -> str | None:
         return None
 
 
-def _lscpu_values() -> dict[str, str]:
-    output = _run(("lscpu", "--json"))
-    if output:
-        try:
-            rows = json.loads(output).get("lscpu", [])
-            return {
-                str(row["field"]).rstrip(":"): str(row["data"]).strip()
-                for row in rows
-                if row.get("field") and row.get("data") is not None
-            }
-        except (json.JSONDecodeError, AttributeError, KeyError, TypeError):
-            pass
-    plain = _run(("lscpu",))
-    if not plain:
-        return {}
-    values: dict[str, str] = {}
-    for line in plain.splitlines():
-        if ":" in line:
-            key, value = line.split(":", 1)
-            values[key.strip()] = value.strip()
-    return values
-
-
 def _optional_int(value: str | None) -> int | None:
     if value is None:
         return None
@@ -108,28 +88,6 @@ def _memory_capacity_gib() -> float | None:
         return psutil.virtual_memory().total / (1024**3)
     except (ImportError, OSError):
         return None
-
-
-def _cpu_isa(lscpu: dict[str, str]) -> str | None:
-    architecture = lscpu.get("Architecture") or platform.machine() or None
-    flags = set((lscpu.get("Flags") or lscpu.get("Features") or "").split())
-    selected = sorted(
-        flags
-        & {
-            "avx",
-            "avx2",
-            "avx512f",
-            "avx512_bf16",
-            "avx_vnni",
-            "amx_bf16",
-            "amx_int8",
-            "sve",
-            "sve2",
-        }
-    )
-    if architecture and selected:
-        return f"{architecture}:" + ",".join(selected)
-    return architecture
 
 
 def _visible_devices(
@@ -284,7 +242,9 @@ def collect_metadata(
 ) -> dict[str, Any]:
     """Collect identity, software, scheduler, and hardware metadata for one run."""
 
-    lscpu = _lscpu_values()
+    lscpu = lscpu_values()
+    hardware = inspect_hardware(config)
+    memory_binding_resolved = resolve_memory_binding(config, hardware)
     accelerators, driver_version, accelerator_visibility, visibility_warning = _accelerators()
     nvidia_devices_unscoped = bool(accelerators) and (
         accelerator_visibility is None or accelerator_visibility.strip().lower() == "all"
@@ -302,18 +262,27 @@ def collect_metadata(
             "left unavailable rather than recording every node GPU."
         )
     selected_type = benchmark_type or config.resolved_benchmark_type
+    runtime_environment_variable: str | None = None
+    native_binary_path: str | None = None
     if config.backend == "vllm":
         backend_version = _package_version("vllm")
         vllm_executable = os.environ.get("VLLM_BIN") or "vllm"
+        runtime_environment_variable = "VLLM_BIN" if os.environ.get("VLLM_BIN") else None
+        if config.provider == "native":
+            native_binary_path = shutil.which(vllm_executable)
         native_binary_version = (
             _run((vllm_executable, "--version")) if config.provider == "native" else None
         )
     else:
         llama_executable = "llama-bench" if selected_type == "offline" else "llama-server"
-        if config.provider == "native" and os.environ.get("LLAMA_CPP_BIN_DIR"):
+        binary_variable = llama_cpp_runtime_variable(config, "bin_dir")
+        runtime_environment_variable = binary_variable
+        if config.provider == "native" and os.environ.get(binary_variable):
             llama_executable = str(
-                Path(os.environ["LLAMA_CPP_BIN_DIR"]).expanduser() / llama_executable
+                Path(os.environ[binary_variable]).expanduser() / llama_executable
             )
+        if config.provider == "native":
+            native_binary_path = shutil.which(llama_executable)
         native_binary_version = (
             _run((llama_executable, "--version")) if config.provider == "native" else None
         )
@@ -338,15 +307,21 @@ def collect_metadata(
         accelerator_visibility = None
     container_image = None
     if config.provider == "docker":
-        container_image = os.environ.get(
-            "VLLM_DOCKER_IMAGE" if config.backend == "vllm" else "LLAMA_CPP_DOCKER_IMAGE"
+        variable = (
+            "VLLM_DOCKER_IMAGE"
+            if config.backend == "vllm"
+            else llama_cpp_runtime_variable(config, "docker_image")
         )
+        runtime_environment_variable = variable
+        container_image = os.environ.get(variable)
     elif config.provider == "apptainer":
-        container_image = os.environ.get(
+        variable = (
             "VLLM_APPTAINER_IMAGE"
             if config.backend == "vllm"
-            else "LLAMA_CPP_APPTAINER_IMAGE"
+            else llama_cpp_runtime_variable(config, "apptainer_image")
         )
+        runtime_environment_variable = variable
+        container_image = os.environ.get(variable)
     container_digest = (
         "sha256:" + container_image.split("@sha256:", 1)[1]
         if container_image and "@sha256:" in container_image
@@ -397,6 +372,8 @@ def collect_metadata(
         "container_image_digest": container_digest,
         "container_id": None,
         "native_binary_version": native_binary_version,
+        "native_binary_path": native_binary_path,
+        "runtime_environment_variable": runtime_environment_variable,
         "measurement_method": (
             "backend_native" if selected_type == "offline" else "shared_openai_streaming"
         ),
@@ -429,12 +406,25 @@ def collect_metadata(
         "cpu_mask": config.cpu_mask,
         "numa_policy": config.numa_policy,
         "memory_binding": config.memory_binding,
+        "memory_binding_resolved": memory_binding_resolved,
         "memory_type": config.memory_type,
         "memory_mode": config.memory_mode,
+        "memory_mode_requested": hardware["memory_mode_requested"],
+        "memory_mode_detected": hardware["memory_mode_detected"],
+        "memory_mode_detection_method": hardware["memory_mode_detection_method"],
+        "memory_mode_verified": hardware["memory_mode_verified"],
         "memory_capacity_gib": _memory_capacity_gib(),
+        "numa_nodes": hardware["numa_nodes"],
+        "hbm_numa_nodes": hardware["hbm_numa_nodes"],
+        "ddr_numa_nodes": hardware["ddr_numa_nodes"],
         "thread_affinity": config.cpu_mask,
         "process_count": 1,
-        "cpu_isa": _cpu_isa(lscpu),
+        "cpu_isa": hardware["cpu_isa"],
+        "cpu_isa_target": hardware["cpu_isa_target"],
+        "cpu_features_required": hardware["cpu_features_required"],
+        "cpu_features_detected": hardware["cpu_features_detected"],
+        "cpu_features_missing": hardware["cpu_features_missing"],
+        "cpu_isa_verified": hardware["cpu_isa_verified"],
         "gpu_layers": config.gpu_layers,
         "batch_size": config.batch_size,
         "ubatch_size": config.ubatch_size,

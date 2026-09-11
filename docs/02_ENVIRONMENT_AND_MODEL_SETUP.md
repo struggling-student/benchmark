@@ -34,6 +34,21 @@ export LLAMA_CPP_CONVERT_SCRIPT=/absolute/path/to/llama.cpp/convert_hf_to_gguf.p
 export LLAMA_CPP_QUANTIZE_BIN=/absolute/path/to/llama.cpp/build/bin/llama-quantize
 ```
 
+An explicit CPU ISA profile selects a separate build directory:
+
+```bash
+export LLAMA_CPP_AVX2_BIN_DIR=/absolute/path/to/llama.cpp/build-avx2/bin
+export LLAMA_CPP_AVX512_BIN_DIR=/absolute/path/to/llama.cpp/build-avx512/bin
+export LLAMA_CPP_AMX_BIN_DIR=/absolute/path/to/llama.cpp/build-amx/bin
+```
+
+Build these from the same pinned llama.cpp commit. The AVX-512 build must have AMX disabled; the
+AMX build must enable the required AMX and AVX-512 features. llama.cpp controls these at build
+time through `GGML_AVX2`, `GGML_AVX512*`, and `GGML_AMX_*`, so changing only a YAML label is not a
+controlled ISA treatment. Its optional `GGML_CPU_HBM`/memkind build feature is relevant only when
+using addressable HBM in flat mode; cache mode is transparent to the application. Preserve each
+build's CMake cache or build log with the campaign records.
+
 The runner invokes argv directly. YAML files cannot inject arbitrary shell commands.
 
 ### Docker
@@ -45,9 +60,14 @@ export LLAMA_CPP_DOCKER_IMAGE='ghcr.io/ggml-org/llama.cpp:full@sha256:<DIGEST>'
 export VLLM_DOCKER_IMAGE='<REGISTRY>/<VLLM_IMAGE>@sha256:<DIGEST>'
 ```
 
+For explicit CPU ISA profiles, use the corresponding immutable image variables:
+`LLAMA_CPP_AVX2_DOCKER_IMAGE`, `LLAMA_CPP_AVX512_DOCKER_IMAGE`, and
+`LLAMA_CPP_AMX_DOCKER_IMAGE`. Apptainer uses the same naming pattern with
+`_APPTAINER_IMAGE`.
+
 The provider adds explicit read-only cache/artifact mounts, a writable result mount, port mapping,
-GPU selection for GPU/hybrid profiles, a small environment allowlist, a stable container name, ID
-capture, and forced cleanup.
+GPU selection for GPU/hybrid profiles, Docker-native `--cpuset-mems` placement when configured, a
+small environment allowlist, a stable container name, ID capture, and forced cleanup.
 
 ### Apptainer or Singularity
 
@@ -130,7 +150,8 @@ llm-bench preflight \
 ```
 
 `validate` checks the composed schema. `preflight` additionally checks backend/provider capability,
-executables or pinned images, GGUF provenance, optional telemetry capabilities, port/host resolution,
-and the final provider-wrapped argv.
+the selected ISA-specific executable or pinned image, execution-node CPU flags, requested versus
+detected Xeon Max HBM mode, flat-mode NUMA tier placement, GGUF provenance, optional telemetry
+capabilities, port/host resolution, and the final provider-wrapped argv.
 
 Continue with [03 — Running the benchmarks](03_RUNNING_THE_BENCHMARKS.md).

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .config import ConfigurationError, ExperimentConfig
+from .hardware import resolve_memory_binding
 
 _ENVIRONMENT_ALLOWLIST = (
     "CUDA_VISIBLE_DEVICES",
@@ -66,12 +67,31 @@ def _allowed_environment() -> list[tuple[str, str]]:
 
 
 def _memory_prefix(config: ExperimentConfig) -> list[str]:
-    if not config.memory_binding:
+    memory_binding = resolve_memory_binding(config)
+    if not memory_binding:
         return []
     numactl = shutil.which("numactl")
     if numactl is None:
         raise ConfigurationError("memory_binding requires the numactl executable")
-    return [numactl, "--membind", config.memory_binding]
+    return [numactl, "--membind", memory_binding]
+
+
+def llama_cpp_runtime_variable(config: ExperimentConfig, kind: str) -> str:
+    """Return the generic or ISA-specific llama.cpp runtime variable."""
+
+    suffixes = {
+        "bin_dir": "BIN_DIR",
+        "docker_image": "DOCKER_IMAGE",
+        "apptainer_image": "APPTAINER_IMAGE",
+    }
+    try:
+        suffix = suffixes[kind]
+    except KeyError as exc:
+        raise ValueError(f"unknown llama.cpp runtime variable kind: {kind}") from exc
+    target = config.cpu_isa_target if config.hardware_type == "cpu" else None
+    if target and target != "auto":
+        return f"LLAMA_CPP_{target.upper()}_{suffix}"
+    return f"LLAMA_CPP_{suffix}"
 
 
 def _container_command(command: list[str], config: ExperimentConfig) -> list[str]:
@@ -89,8 +109,16 @@ class NativeProvider:
     name = "native"
 
     def _resolve(self, command: str, config: ExperimentConfig) -> str | None:
-        if config.backend == "llamacpp" and os.environ.get("LLAMA_CPP_BIN_DIR"):
-            candidate = Path(os.environ["LLAMA_CPP_BIN_DIR"]).expanduser() / command
+        if config.backend == "llamacpp":
+            variable = llama_cpp_runtime_variable(config, "bin_dir")
+            directory = os.environ.get(variable)
+            if config.cpu_isa_target not in {None, "auto"} and not directory:
+                raise ConfigurationError(
+                    f"{variable} is required for cpu_isa target {config.cpu_isa_target!r}"
+                )
+            if not directory:
+                return shutil.which(command)
+            candidate = Path(directory).expanduser() / command
             return (
                 str(candidate.resolve())
                 if candidate.is_file() and os.access(candidate, os.X_OK)
@@ -162,7 +190,11 @@ class DockerProvider:
     name = "docker"
 
     def _image(self, config: ExperimentConfig) -> str:
-        variable = "VLLM_DOCKER_IMAGE" if config.backend == "vllm" else "LLAMA_CPP_DOCKER_IMAGE"
+        variable = (
+            "VLLM_DOCKER_IMAGE"
+            if config.backend == "vllm"
+            else llama_cpp_runtime_variable(config, "docker_image")
+        )
         image = _required_env(variable)
         if _OCI_DIGEST.search(image) is None:
             raise ConfigurationError(f"{variable} must pin an immutable @sha256 digest")
@@ -185,6 +217,8 @@ class DockerProvider:
         command = _container_command(command, config)
         name = context.container_name or f"llm-bench-{os.getpid()}"
         wrapped = ["docker", "run", "--rm", "--name", name]
+        if memory_binding := resolve_memory_binding(config):
+            wrapped.extend(("--cpuset-mems", memory_binding))
         if config.hardware_type in {"gpu", "hybrid"}:
             visibility = os.environ.get("CUDA_VISIBLE_DEVICES")
             gpu_selection = (
@@ -208,7 +242,7 @@ class DockerProvider:
             )
             wrapped.extend(("--mount", specification))
         wrapped.extend(("--entrypoint", command[0], self._image(config), *command[1:]))
-        return [*_memory_prefix(config), *wrapped]
+        return wrapped
 
 
 class ApptainerProvider:
@@ -222,7 +256,9 @@ class ApptainerProvider:
 
     def _image(self, config: ExperimentConfig) -> str:
         variable = (
-            "VLLM_APPTAINER_IMAGE" if config.backend == "vllm" else "LLAMA_CPP_APPTAINER_IMAGE"
+            "VLLM_APPTAINER_IMAGE"
+            if config.backend == "vllm"
+            else llama_cpp_runtime_variable(config, "apptainer_image")
         )
         image = _required_env(variable)
         if image.startswith("docker://") and _OCI_DIGEST.search(image) is None:

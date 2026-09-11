@@ -270,12 +270,18 @@ def test_cpu_pairs_require_memory_and_placement_controls() -> None:
         "cpu_model": "test-cpu",
         "memory_type": "HBM2e",
         "memory_mode": "flat",
+        "memory_mode_detected": "flat",
+        "memory_mode_verified": True,
         "thread_count": 64,
         "thread_affinity": "compact",
         "process_count": 2,
         "numa_policy": "local",
         "memory_binding": "hbm",
+        "memory_binding_resolved": "2,3",
         "cpu_isa": "AVX-512",
+        "cpu_isa_target": "avx512",
+        "cpu_features_required": ["avx512f"],
+        "cpu_isa_verified": True,
     }
     left.update(cpu_controls)
     right.update(cpu_controls)
@@ -305,12 +311,18 @@ def test_missing_cpu_placement_evidence_makes_comparison_partial() -> None:
                 "gpu_memory_utilization": None,
                 "memory_type": "HBM2e",
                 "memory_mode": "flat",
+                "memory_mode_detected": "flat",
+                "memory_mode_verified": True,
                 "thread_count": 64,
                 "thread_affinity": None,
                 "process_count": 2,
                 "numa_policy": "local",
                 "memory_binding": "hbm",
+                "memory_binding_resolved": "2,3",
                 "cpu_isa": "AVX-512",
+                "cpu_isa_target": "avx512",
+                "cpu_features_required": ["avx512f"],
+                "cpu_isa_verified": True,
             }
         )
         summary["software_versions"]["cuda_runtime"] = None

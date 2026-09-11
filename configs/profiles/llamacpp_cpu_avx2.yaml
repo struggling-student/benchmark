@@ -1,9 +1,13 @@
 schema_version: "2.0"
-profile_name: llamacpp_cpu
+profile_name: llamacpp_cpu_avx2
 backend: llamacpp
 hardware_type: cpu
-cpu_isa: auto
-cpu_features_required: []
+cpu_isa: avx2
+cpu_features_required:
+  - avx
+  - avx2
+  - f16c
+  - fma
 host: 127.0.0.1
 port: 8080
 tensor_parallel_size: 1

@@ -22,6 +22,7 @@ import yaml
 from .api_client import run_api_benchmark
 from .backends import BackendAdapter, endpoint, get_backend
 from .config import ConfigurationError, ExperimentConfig
+from .hardware import validate_hardware
 from .measurements import create_measurements, write_measurements
 from .metadata import collect_metadata, write_metadata
 from .preparation import load_artifact_manifest, sha256_file
@@ -375,7 +376,9 @@ def validate_runtime(
     _configure_cache_environment()
     backend = get_backend(config.backend)
     provider = get_provider(config.provider)
+    hardware, hardware_checks = validate_hardware(config)
     checks = [
+        *hardware_checks,
         *backend.validate(config, require_artifact=require_artifact),
         *provider.validate(config),
     ]
@@ -430,6 +433,7 @@ def validate_runtime(
         "provider": config.provider,
         "benchmark_type": config.benchmark_type,
         "checks": checks,
+        "hardware": hardware,
         "telemetry": telemetry_capabilities(),
         "offline_command": offline_command,
         "server_command": server_command,

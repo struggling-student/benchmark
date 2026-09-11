@@ -38,10 +38,60 @@ def test_shipped_manifests_compose_complete_f16_matrix() -> None:
         for profile in profiles
     ]
 
-    assert len(resolved) == 18
+    assert len(resolved) == 54
     assert {item.backend for item in resolved} == {"vllm", "llamacpp"}
     assert {item.benchmark_type for item in resolved} == {"smoke", "offline", "serving"}
     assert all(item.tokenizer == item.model_id for item in resolved)
+
+
+def test_cpu_isa_and_hbm_mode_are_part_of_resolved_profile() -> None:
+    config = load_composed_experiment(
+        ROOT / "configs/models/llama32_1b.yaml",
+        ROOT / "configs/workloads/offline.yaml",
+        ROOT / "configs/profiles/llamacpp_cpu_amx_hbm_cache.yaml",
+        provider="native",
+        variant="f16",
+        artifact_root="/models",
+    )
+
+    assert config.hardware_type == "cpu"
+    assert config.cpu_isa_target == "amx"
+    assert "amx_int8" in config.cpu_features_required
+    assert config.memory_type == "hbm2e+ddr5"
+    assert config.memory_mode == "cache"
+
+
+def test_flat_single_tier_profile_requires_memory_binding(tmp_path: Path) -> None:
+    original = (
+        ROOT / "configs/profiles/llamacpp_cpu_amx_hbm_flat.yaml"
+    ).read_text(encoding="utf-8")
+    profile = tmp_path / "flat.yaml"
+    profile.write_text(
+        original.replace("memory_binding: hbm", "memory_binding: null"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="requires an explicit memory_binding"):
+        load_execution_profile(profile)
+
+
+def test_flat_profile_can_select_discovered_ddr_tier(tmp_path: Path) -> None:
+    original = (
+        ROOT / "configs/profiles/llamacpp_cpu_avx512_hbm_flat.yaml"
+    ).read_text(encoding="utf-8")
+    profile = tmp_path / "flat-ddr.yaml"
+    profile.write_text(
+        original.replace("memory_binding: hbm", "memory_binding: ddr").replace(
+            "memory_type: hbm2e", "memory_type: ddr5"
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_execution_profile(profile)
+
+    assert loaded.memory_mode == "flat"
+    assert loaded.memory_type == "ddr5"
+    assert loaded.memory_binding == "ddr"
 
 
 def test_quantized_variants_are_llamacpp_only() -> None:

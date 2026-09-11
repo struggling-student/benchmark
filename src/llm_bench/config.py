@@ -15,6 +15,8 @@ import yaml
 BENCHMARK_TYPES = ("smoke", "offline", "serving")
 BACKENDS = ("vllm", "llamacpp")
 PROVIDERS = ("native", "docker", "apptainer")
+CPU_ISA_TARGETS = ("auto", "avx2", "avx512", "amx")
+MEMORY_MODES = ("none", "flat", "cache")
 CONFIG_SCHEMA_VERSION = "2.0"
 
 
@@ -73,6 +75,8 @@ class ExecutionProfile:
     profile_name: str
     backend: str
     hardware_type: str
+    cpu_isa: str | None
+    cpu_features_required: tuple[str, ...]
     host: str
     port: int
     tensor_parallel_size: int
@@ -130,6 +134,8 @@ class ExperimentConfig:
     artifact_path: str | None = None
     artifact_manifest_path: str | None = None
     hardware_type: str = "unknown"
+    cpu_isa_target: str | None = None
+    cpu_features_required: tuple[str, ...] = ()
     host: str = "127.0.0.1"
     port: int = 8000
     thread_count: int | None = None
@@ -155,6 +161,7 @@ class ExperimentConfig:
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["tokenizer_id"] = self.tokenizer
+        data["cpu_features_required"] = list(self.cpu_features_required)
         return data
 
 
@@ -180,6 +187,15 @@ def _optional_string(name: str, value: object) -> str | None:
     if value is None:
         return None
     return _string(name, value)
+
+
+def _string_tuple(name: str, value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise ConfigurationError(f"{name} must be a YAML list")
+    normalized = tuple(_string(f"{name} item", item).lower() for item in value)
+    if len(set(normalized)) != len(normalized):
+        raise ConfigurationError(f"{name} cannot contain duplicates")
+    return normalized
 
 
 def _integer(name: str, value: object, minimum: int = 1) -> int:
@@ -394,6 +410,8 @@ def load_execution_profile(path: str | Path) -> ExecutionProfile:
             "profile_name",
             "backend",
             "hardware_type",
+            "cpu_isa",
+            "cpu_features_required",
             "host",
             "port",
             "tensor_parallel_size",
@@ -418,16 +436,31 @@ def load_execution_profile(path: str | Path) -> ExecutionProfile:
     hardware = _string("hardware_type", data.get("hardware_type"))
     if hardware not in {"cpu", "gpu", "hybrid"}:
         raise ConfigurationError("hardware_type must be cpu, gpu, or hybrid")
+    cpu_isa = _optional_string("cpu_isa", data.get("cpu_isa"))
+    if cpu_isa is not None:
+        cpu_isa = cpu_isa.lower()
+        if cpu_isa not in CPU_ISA_TARGETS:
+            raise ConfigurationError(
+                f"cpu_isa must be one of {', '.join(CPU_ISA_TARGETS)} or null"
+            )
+    cpu_features_required = _string_tuple(
+        "cpu_features_required", data.get("cpu_features_required", [])
+    )
     gpu_memory = data.get("gpu_memory_utilization")
     if gpu_memory is not None:
         gpu_memory = _positive_number("gpu_memory_utilization", gpu_memory, maximum=1.0)
     gpu_layers = data.get("gpu_layers")
     if gpu_layers != "all" and gpu_layers is not None:
         gpu_layers = _integer("gpu_layers", gpu_layers, 0)
+    memory_mode = _optional_string("memory_mode", data.get("memory_mode"))
+    if memory_mode is not None:
+        memory_mode = memory_mode.lower()
     profile = ExecutionProfile(
         profile_name=_string("profile_name", data.get("profile_name")),
         backend=backend,
         hardware_type=hardware,
+        cpu_isa=cpu_isa,
+        cpu_features_required=cpu_features_required,
         host=_string("host", data.get("host", "127.0.0.1")),
         port=_integer("port", data.get("port", 8000)),
         tensor_parallel_size=_integer(
@@ -442,7 +475,7 @@ def load_execution_profile(path: str | Path) -> ExecutionProfile:
         numa_policy=_optional_string("numa_policy", data.get("numa_policy")),
         memory_binding=_optional_string("memory_binding", data.get("memory_binding")),
         memory_type=_optional_string("memory_type", data.get("memory_type")),
-        memory_mode=_optional_string("memory_mode", data.get("memory_mode")),
+        memory_mode=memory_mode,
         gpu_layers=gpu_layers,
         batch_size=_optional_integer("batch_size", data.get("batch_size")),
         ubatch_size=_optional_integer("ubatch_size", data.get("ubatch_size")),
@@ -464,10 +497,39 @@ def load_execution_profile(path: str | Path) -> ExecutionProfile:
         )
     ):
         raise ConfigurationError("vLLM profiles cannot contain llama.cpp execution controls")
+    if backend == "vllm" and hardware != "gpu":
+        raise ConfigurationError("vLLM profiles require hardware_type: gpu")
+    if hardware == "cpu" and cpu_isa is None:
+        raise ConfigurationError("CPU profiles require an explicit cpu_isa target")
+    if hardware == "gpu" and (cpu_isa is not None or cpu_features_required):
+        raise ConfigurationError("GPU profiles cannot require a CPU ISA target or features")
+    if hardware == "gpu" and any(
+        value is not None
+        for value in (profile.memory_binding, profile.memory_type, profile.memory_mode)
+    ):
+        raise ConfigurationError("GPU profiles cannot contain CPU memory controls")
     if backend == "llamacpp" and hardware == "cpu" and gpu_layers not in (None, 0):
         raise ConfigurationError("CPU llama.cpp profiles require gpu_layers: 0")
     if hardware == "cpu" and (profile.memory_type is None or profile.memory_mode is None):
         raise ConfigurationError("CPU profiles require explicit memory_type and memory_mode")
+    if profile.memory_mode is not None and profile.memory_mode not in MEMORY_MODES:
+        raise ConfigurationError(f"memory_mode must be one of {', '.join(MEMORY_MODES)} or null")
+    memory_type = (profile.memory_type or "").lower()
+    if profile.memory_mode == "cache" and "hbm" not in memory_type:
+        raise ConfigurationError("cache mode requires an HBM memory_type")
+    if profile.memory_mode == "flat" and not any(
+        tier in memory_type for tier in ("hbm", "ddr")
+    ):
+        raise ConfigurationError("flat mode requires an HBM or DDR memory_type")
+    if (
+        profile.memory_mode == "flat"
+        and memory_type
+        and ("hbm" in memory_type) != ("ddr" in memory_type)
+        and profile.memory_binding is None
+    ):
+        raise ConfigurationError(
+            "flat mode with a single memory tier requires an explicit memory_binding"
+        )
     if backend == "llamacpp" and hardware in {"gpu", "hybrid"} and gpu_layers in (None, 0):
         raise ConfigurationError("GPU/hybrid llama.cpp profiles require non-zero gpu_layers")
     return profile
@@ -567,6 +629,8 @@ def resolve_experiment(
         artifact_path=artifact_path,
         artifact_manifest_path=artifact_manifest_path,
         hardware_type=profile.hardware_type,
+        cpu_isa_target=profile.cpu_isa,
+        cpu_features_required=profile.cpu_features_required,
         host=profile.host,
         port=profile.port,
         thread_count=profile.thread_count,
@@ -614,11 +678,25 @@ def config_from_mapping(data: Mapping[str, Any]) -> ExperimentConfig:
     missing = [name for name in ("experiment_name", "backend", "model_id") if name not in data]
     if missing:
         raise ConfigurationError("missing required field(s): " + ", ".join(missing))
-    config = ExperimentConfig(**dict(data))
+    values = dict(data)
+    if "cpu_features_required" in values:
+        raw_features = values["cpu_features_required"]
+        if not isinstance(raw_features, (list, tuple)):
+            raise ConfigurationError("cpu_features_required must be a list or tuple")
+        values["cpu_features_required"] = tuple(
+            _string("cpu_features_required item", item).lower() for item in raw_features
+        )
+    config = ExperimentConfig(**values)
     if config.backend not in BACKENDS:
         raise ConfigurationError(f"backend must be one of {', '.join(BACKENDS)}")
     if config.benchmark_type not in BENCHMARK_TYPES:
         raise ConfigurationError(f"benchmark_type must be one of {', '.join(BENCHMARK_TYPES)}")
+    if config.hardware_type not in {"unknown", "cpu", "gpu", "hybrid"}:
+        raise ConfigurationError("hardware_type must be cpu, gpu, hybrid, or unknown")
+    if config.cpu_isa_target is not None and config.cpu_isa_target not in CPU_ISA_TARGETS:
+        raise ConfigurationError(
+            f"cpu_isa_target must be one of {', '.join(CPU_ISA_TARGETS)} or null"
+        )
     return config
 
 

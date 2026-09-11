@@ -151,6 +151,9 @@ def catalog_row(entry: CatalogEntry) -> dict[str, Any]:
         "hardware": hardware,
         "memory_type": memory_type,
         "memory_mode": summary.get("memory_mode"),
+        "memory_mode_detected": summary.get("memory_mode_detected"),
+        "memory_mode_verified": summary.get("memory_mode_verified"),
+        "cpu_isa_target": summary.get("cpu_isa_target"),
         "precision": summary.get("model_precision") or summary.get("dtype"),
         "source": (
             "Simulated"
@@ -167,4 +170,5 @@ def catalog_row(entry: CatalogEntry) -> dict[str, Any]:
         "thread_count": summary.get("thread_count"),
         "numa_policy": summary.get("numa_policy"),
         "memory_binding": summary.get("memory_binding"),
+        "memory_binding_resolved": summary.get("memory_binding_resolved"),
     }

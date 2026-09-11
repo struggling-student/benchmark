@@ -65,9 +65,13 @@ Every run records:
 - hashes of the source model/workload/profile YAML and the full resolved experiment;
 - canonical and resolved model/tokenizer revisions;
 - artifact format, variant, source revision, file SHA-256, and quantization;
-- backend/profile/provider and backend/native binary or container image identity;
+- backend/profile/provider, selected runtime variable, and backend/native binary or container image
+  identity;
 - Docker container ID or Apptainer image checksum where applicable;
-- CPU/GPU/hybrid classification, topology, thread/NUMA/affinity/memory settings, and GPU layers;
+- CPU/GPU/hybrid classification, requested ISA, required/detected CPU flags, and ISA verification;
+- requested/detected HBM mode, detection method, requested/resolved memory binding, full NUMA
+  topology, HBM/DDR node classes,
+  thread/NUMA/affinity/memory settings, and GPU layers;
 - workload/generation controls and the prompt-manifest hash;
 - measurement method/scope, telemetry/energy scope, status, failures, and warnings.
 
