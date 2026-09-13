@@ -136,6 +136,51 @@ def test_normalization_averages_all_repetitions_and_never_selects_best(
     assert normalized["raw_output_files"] == [str(first), str(second)]
 
 
+def test_llamacpp_offline_success_is_not_marked_failed_on_prompt_count_mismatch(
+    tmp_path: Path,
+) -> None:
+    # llama-bench reports "successful_requests" as its internal timing-sample count
+    # (locked to 1 per invocation), not prompts served, so it is far smaller than
+    # number_of_requests (config.number_of_prompts) even on a fully successful run.
+    first = tmp_path / "raw-1.json"
+    second = tmp_path / "raw-2.json"
+    raw_record = {
+        "n_prompt": 32,
+        "n_gen": 32,
+        "avg_ns": 1_000_000_000,
+        "avg_ts": 32.0,
+        "samples_ns": [1_000_000_000],
+    }
+    first.write_text(json.dumps(raw_record), encoding="utf-8")
+    second.write_text(json.dumps(raw_record), encoding="utf-8")
+    config = config_from_mapping(
+        {
+            "experiment_name": "llamacpp-offline",
+            "benchmark_type": "offline",
+            "backend": "llamacpp",
+            "model_id": "model-a",
+            "model_parameter_scale": "1B",
+            "dtype": "float16",
+            "number_of_prompts": 128,
+            "input_length": 32,
+            "output_length": 32,
+            "max_model_len": 8192,
+            "repetitions": 2,
+        }
+    )
+    initial = create_summary(config, metadata(run_id="llamacpp-offline-run"))
+    initial["measurement_method"] = "llamacpp_bench"
+
+    normalized = normalize_summary(initial, raw_output_paths=[first, second], status="completed")
+
+    assert normalized["status"] == "completed"
+    assert normalized["measured_repetitions"] == 2
+    assert normalized["successful_requests"] == 2
+    assert normalized["actual_input_tokens"] == 64
+    assert normalized["actual_output_tokens"] == 64
+    assert not any("fewer" in item for item in normalized["warnings"])
+
+
 def test_missing_repetition_marks_completed_request_failed(tmp_path: Path) -> None:
     raw = tmp_path / "raw.json"
     raw.write_text('{"elapsed_time": 1.0}', encoding="utf-8")

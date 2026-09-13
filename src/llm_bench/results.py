@@ -747,6 +747,15 @@ METRIC_PARSER_REGISTRY: dict[tuple[str, str], MetricParser] = {
     ("llamacpp", "shared_openai_streaming"): _metrics_from_raw,
 }
 
+# llama-bench has no notion of discrete requests: its "successful_requests" is
+# actually the count of internal timing samples for one pg-shape measurement
+# (locked to 1 per invocation; see LlamaCppAdapter.offline_command), not prompts
+# served. That count is not comparable to number_of_requests (config.number_of_prompts),
+# so the requested-vs-successful completeness check below must be skipped for it.
+_METHODS_WITHOUT_REQUEST_COUNTS = frozenset(
+    key for key, parser in METRIC_PARSER_REGISTRY.items() if parser is _llamacpp_bench_metrics
+)
+
 
 def read_raw_metrics(
     path: str | Path,
@@ -1122,8 +1131,13 @@ def normalize_summary(
         )
     requested = result.get("number_of_requests")
     successful_requests = result.get("successful_requests")
+    measurement_key = (result.get("backend"), result.get("measurement_method"))
     expected_requests = (
-        requested * len(raw_records) if isinstance(requested, int) and raw_records else None
+        requested * len(raw_records)
+        if isinstance(requested, int)
+        and raw_records
+        and measurement_key not in _METHODS_WITHOUT_REQUEST_COUNTS
+        else None
     )
     if (
         expected_requests is not None
