@@ -19,6 +19,11 @@ thread_count_batch: 112
 cpu_mask: null
 numa_policy: null
 memory_binding: hbm
+# See llamacpp_cpu_amx_hbm_cache.yaml: interleaving across the bound nodes stops
+# first touch from stranding the model, and load_mode: none keeps the compute
+# threads from faulting against Lustre mid-run.
+memory_policy: interleave
+load_mode: none
 memory_type: hbm2e
 memory_mode: flat
 gpu_layers: 0

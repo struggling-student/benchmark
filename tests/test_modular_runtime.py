@@ -88,6 +88,27 @@ def test_backend_command_builders_keep_backend_specific_controls() -> None:
     assert command[command.index("--tensor-parallel-size") + 1] == "2"
 
 
+def test_llamacpp_load_mode_reaches_both_entry_points() -> None:
+    # Mapping the GGUF makes the compute threads fault against Lustre while they
+    # work; "none" reads the weights into anonymous memory once instead. Both
+    # llama-bench and llama-server take the same flag, so both must carry it or
+    # the offline and serving numbers stop describing the same memory behaviour.
+    bench = LlamaCppAdapter().offline_command(
+        _config(
+            benchmark_type="offline", temperature=None, top_p=None, ignore_eos=None,
+            load_mode="none",
+        ),
+        Path("ignored.json"),
+    )
+    server = LlamaCppAdapter().server_command(_config(load_mode="none"))
+
+    assert bench[bench.index("-lm") + 1] == "none"
+    assert server[server.index("--load-mode") + 1] == "none"
+
+    plain = LlamaCppAdapter().server_command(_config())
+    assert "--load-mode" not in plain
+
+
 def test_native_provider_uses_configured_binary_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -185,6 +206,47 @@ def test_native_vllm_cpu_flat_runtime_binds_requested_memory_nodes(
     assert wrapped[:3] == ["/usr/bin/numactl", "--membind", "2,3"]
     assert wrapped[3] == "/usr/bin/env"
     assert str(binary) in wrapped
+
+
+def test_interleave_memory_policy_stripes_pages_across_nodes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Default first-touch hands every page to the socket that wins the load race,
+    # and the winner changes from launch to launch. "all" is the whole-machine
+    # form used when no explicit binding narrows the set.
+    binary = tmp_path / "vllm"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o755)
+    monkeypatch.setenv("VLLM_CPU_BIN", str(binary))
+    monkeypatch.setattr("llm_bench.providers.shutil.which", lambda name: f"/usr/bin/{name}")
+    config = _vllm_cpu_config(memory_mode="cache", memory_type="hbm2e+ddr5",
+                              memory_policy="interleave")
+
+    wrapped = NativeProvider().wrap(
+        ["vllm", "serve", "test/model"], config, ProviderContext(tmp_path, None, None)
+    )
+
+    assert wrapped[:3] == ["/usr/bin/numactl", "--interleave", "all"]
+
+
+def test_interleave_memory_policy_respects_an_explicit_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binary = tmp_path / "vllm"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o755)
+    monkeypatch.setenv("VLLM_CPU_BIN", str(binary))
+    monkeypatch.setattr("llm_bench.providers.shutil.which", lambda name: f"/usr/bin/{name}")
+    config = _vllm_cpu_config(
+        memory_mode="flat", memory_type="hbm2e", memory_binding="2,3",
+        memory_policy="interleave",
+    )
+
+    wrapped = NativeProvider().wrap(
+        ["vllm", "serve", "test/model"], config, ProviderContext(tmp_path, None, None)
+    )
+
+    assert wrapped[:3] == ["/usr/bin/numactl", "--interleave", "2,3"]
 
 
 def test_docker_vllm_cpu_flat_runtime_binds_requested_memory_nodes(

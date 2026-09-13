@@ -278,6 +278,8 @@ def test_cpu_pairs_require_memory_and_placement_controls() -> None:
         "numa_policy": "local",
         "memory_binding": "hbm",
         "memory_binding_resolved": "2,3",
+        "memory_policy": "interleave",
+        "load_mode": "none",
         "cpu_isa": "AVX-512",
         "cpu_isa_target": "avx512",
         "cpu_features_required": ["avx512f"],
@@ -298,6 +300,53 @@ def test_cpu_pairs_require_memory_and_placement_controls() -> None:
     compatibility = check_compatibility(left, right)
     assert compatibility["status"] == "incompatible"
     assert {"field": "memory_type", "left": "HBM2e", "right": "DDR5"} in compatibility[
+        "mismatched_fields"
+    ]
+
+
+def test_cpu_pairs_differing_in_page_placement_are_incompatible() -> None:
+    # Between-launch measurements on the Xeon Max nodes moved by 27x on prefill
+    # and 4x on decode purely on these two controls, so a pair that disagrees on
+    # them is not a like-for-like comparison however well its own error bars look.
+    left = completed_summary(model_id="model-a", run_id="left", throughput=2.0)
+    right = completed_summary(model_id="model-b", run_id="right", throughput=3.0)
+    cpu_controls = {
+        "hardware_type": "cpu",
+        "accelerator_name": None,
+        "accelerator_count": 0,
+        "gpu_memory_utilization": None,
+        "cpu_model": "test-cpu",
+        "memory_type": "HBM2e",
+        "memory_mode": "cache",
+        "memory_mode_detected": "cache",
+        "memory_mode_verified": True,
+        "thread_count": 112,
+        "thread_affinity": "compact",
+        "process_count": 1,
+        "numa_policy": "isolate",
+        "memory_binding": None,
+        "memory_binding_resolved": None,
+        "memory_policy": "interleave",
+        "load_mode": "none",
+        "cpu_isa": "AVX-512",
+        "cpu_isa_target": "avx512",
+        "cpu_features_required": ["avx512f"],
+        "cpu_isa_verified": True,
+        "vllm_cpu_kvcache_space_gib": 8,
+        "vllm_cpu_omp_threads_bind": "auto",
+        "vllm_cpu_num_reserved_cpu": 1,
+    }
+    left.update(cpu_controls)
+    right.update(cpu_controls)
+    for summary in (left, right):
+        summary["software_versions"]["cuda_runtime"] = None
+        summary["software_versions"]["nvidia_driver"] = None
+    assert check_compatibility(left, right)["status"] == "compatible"
+
+    right["load_mode"] = "mmap"
+    compatibility = check_compatibility(left, right)
+    assert compatibility["status"] == "incompatible"
+    assert {"field": "load_mode", "left": "none", "right": "mmap"} in compatibility[
         "mismatched_fields"
     ]
 

@@ -408,6 +408,8 @@ def collect_metadata(
         "numa_policy": config.numa_policy,
         "memory_binding": config.memory_binding,
         "memory_binding_resolved": memory_binding_resolved,
+        "memory_policy": config.memory_policy,
+        "load_mode": config.load_mode,
         "vllm_cpu_kvcache_space_gib": config.vllm_cpu_kvcache_space_gib,
         "vllm_cpu_omp_threads_bind": config.vllm_cpu_omp_threads_bind,
         "vllm_cpu_num_reserved_cpu": config.vllm_cpu_num_reserved_cpu,

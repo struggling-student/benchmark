@@ -17,6 +17,13 @@ BACKENDS = ("vllm", "llamacpp")
 PROVIDERS = ("native", "docker", "apptainer")
 CPU_ISA_TARGETS = ("auto", "avx2", "avx512", "amx")
 MEMORY_MODES = ("none", "flat", "cache")
+# Host-level NUMA allocation policy applied around the backend process.
+# "interleave" round-robins pages across the selected nodes; on the Xeon Max
+# HBM nodes it stops first touch from stranding the whole model on one socket.
+MEMORY_POLICIES = ("bind", "interleave")
+# llama.cpp -lm/--load-mode. "none" reads the weights into anonymous memory
+# instead of mapping the GGUF, which matters when the file lives on Lustre.
+LOAD_MODES = ("auto", "none", "mmap", "mlock", "mmap+mlock", "dio")
 CONFIG_SCHEMA_VERSION = "2.0"
 
 
@@ -89,6 +96,8 @@ class ExecutionProfile:
     cpu_mask: str | None
     numa_policy: str | None
     memory_binding: str | None
+    memory_policy: str | None
+    load_mode: str | None
     memory_type: str | None
     memory_mode: str | None
     gpu_layers: int | str | None
@@ -149,6 +158,8 @@ class ExperimentConfig:
     cpu_mask: str | None = None
     numa_policy: str | None = None
     memory_binding: str | None = None
+    memory_policy: str | None = None
+    load_mode: str | None = None
     memory_type: str | None = None
     memory_mode: str | None = None
     gpu_layers: int | str | None = None
@@ -430,6 +441,8 @@ def load_execution_profile(path: str | Path) -> ExecutionProfile:
             "cpu_mask",
             "numa_policy",
             "memory_binding",
+            "memory_policy",
+            "load_mode",
             "memory_type",
             "memory_mode",
             "gpu_layers",
@@ -494,6 +507,8 @@ def load_execution_profile(path: str | Path) -> ExecutionProfile:
         cpu_mask=_optional_string("cpu_mask", data.get("cpu_mask")),
         numa_policy=_optional_string("numa_policy", data.get("numa_policy")),
         memory_binding=_optional_string("memory_binding", data.get("memory_binding")),
+        memory_policy=_optional_string("memory_policy", data.get("memory_policy")),
+        load_mode=_optional_string("load_mode", data.get("load_mode")),
         memory_type=_optional_string("memory_type", data.get("memory_type")),
         memory_mode=memory_mode,
         gpu_layers=gpu_layers,
@@ -570,6 +585,15 @@ def load_execution_profile(path: str | Path) -> ExecutionProfile:
         raise ConfigurationError(
             "flat mode with a single memory tier requires an explicit memory_binding"
         )
+    if profile.memory_policy is not None and profile.memory_policy not in MEMORY_POLICIES:
+        raise ConfigurationError(
+            f"memory_policy must be one of {', '.join(MEMORY_POLICIES)} or null"
+        )
+    if profile.load_mode is not None:
+        if backend != "llamacpp":
+            raise ConfigurationError("load_mode is a llama.cpp control")
+        if profile.load_mode not in LOAD_MODES:
+            raise ConfigurationError(f"load_mode must be one of {', '.join(LOAD_MODES)} or null")
     if backend == "llamacpp" and hardware in {"gpu", "hybrid"} and gpu_layers in (None, 0):
         raise ConfigurationError("GPU/hybrid llama.cpp profiles require non-zero gpu_layers")
     return profile
@@ -681,6 +705,8 @@ def resolve_experiment(
         cpu_mask=profile.cpu_mask,
         numa_policy=profile.numa_policy,
         memory_binding=profile.memory_binding,
+        memory_policy=profile.memory_policy,
+        load_mode=profile.load_mode,
         memory_type=profile.memory_type,
         memory_mode=profile.memory_mode,
         gpu_layers=profile.gpu_layers,

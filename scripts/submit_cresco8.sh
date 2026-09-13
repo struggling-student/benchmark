@@ -53,7 +53,17 @@ WORKLOAD_NAME="$(basename "${WORKLOAD}" .yaml)"
 #   HF_HUB_OFFLINE=1  CRESCO8 compute nodes have no outbound network. Without it
 #                     every Hugging Face file lookup waits out an HTTP timeout
 #                     before falling back to the local cache.
+#   OMP_PROC_BIND     ggml links libgomp. With no binding policy the OpenMP
+#   OMP_PLACES        threads migrate across both sockets for the whole run, so
+#                     a thread's working set goes remote mid-kernel. Pinning one
+#                     thread per core lifted AMX prefill from 292 to 518 tok/s
+#                     on its own and, combined with the profile's
+#                     memory_policy/load_mode, brought between-launch CV under
+#                     5 % on both prefill and decode. The provider forwards
+#                     these through its own allowlist, so they are exported for
+#                     the native provider; APPTAINERENV_* covers the container.
 CONTAINER_ENV="APPTAINERENV_HF_HUB_OFFLINE=1"
+CONTAINER_ENV="${CONTAINER_ENV},OMP_PROC_BIND=close,OMP_PLACES=cores"
 
 # The V2 CPU model runner in the v0.29.0 vLLM CPU image prepares prefill inputs
 # with a Triton kernel whose launcher is ABI-incompatible with the bundled Triton

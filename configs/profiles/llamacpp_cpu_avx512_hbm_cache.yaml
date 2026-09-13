@@ -19,6 +19,17 @@ thread_count_batch: 112
 cpu_mask: null
 numa_policy: null
 memory_binding: null
+# Measured on cresco8-hbm[01-16], Llama-3.2-1B F16, 112 threads, 10 launches per
+# cell. Default first-touch stranded the whole model on whichever socket won the
+# load race, and which socket that was changed every launch: prefill 292 tok/s
+# at CV 29 % (AMX) and 72 tok/s at CV 53 % (AVX-512). Interleaving pages across
+# both nodes removes the race.
+memory_policy: interleave
+# The GGUF lives on Lustre. Mapping it means the compute threads take page
+# faults against a network filesystem while they work, which is what made decode
+# non-reproducible: 1.0-54.5 tok/s across launches on the AVX-512 path, CV 119 %.
+# Reading the weights into anonymous memory once removes that entirely.
+load_mode: none
 memory_type: hbm2e+ddr5
 memory_mode: cache
 gpu_layers: 0

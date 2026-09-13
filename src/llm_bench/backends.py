@@ -173,6 +173,8 @@ class LlamaCppAdapter:
             command.extend(
                 (("-tb" if short else "--threads-batch"), str(config.thread_count_batch))
             )
+        if config.load_mode:
+            command.extend((("-lm" if short else "--load-mode"), config.load_mode))
         if config.cpu_mask:
             command.extend(("--cpu-mask", config.cpu_mask))
         if config.numa_policy:

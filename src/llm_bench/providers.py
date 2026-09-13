@@ -20,6 +20,8 @@ _ENVIRONMENT_ALLOWLIST = (
     "NCCL_DEBUG",
     "NCCL_SOCKET_IFNAME",
     "OMP_NUM_THREADS",
+    "OMP_PLACES",
+    "OMP_PROC_BIND",
     "TRANSFORMERS_CACHE",
 )
 _OCI_DIGEST = re.compile(r"@sha256:[0-9a-fA-F]{64}$")
@@ -84,12 +86,22 @@ def _container_environment(config: ExperimentConfig) -> list[tuple[str, str]]:
 
 
 def _memory_prefix(config: ExperimentConfig) -> list[str]:
+    # Without an explicit policy the kernel places each page on the node of the
+    # thread that first touches it. On the two-socket Xeon Max nodes that hands
+    # the whole model to whichever socket wins the race at load time, and which
+    # socket that is changes from one launch to the next. "interleave" removes
+    # the race by striping pages across the nodes.
     memory_binding = resolve_memory_binding(config)
-    if not memory_binding:
+    policy = config.memory_policy or ("bind" if memory_binding else None)
+    if policy is None:
         return []
     numactl = shutil.which("numactl")
     if numactl is None:
-        raise ConfigurationError("memory_binding requires the numactl executable")
+        raise ConfigurationError("memory_policy and memory_binding require the numactl executable")
+    if policy == "interleave":
+        return [numactl, "--interleave", memory_binding or "all"]
+    if not memory_binding:
+        raise ConfigurationError("memory_policy 'bind' requires an explicit memory_binding")
     return [numactl, "--membind", memory_binding]
 
 
