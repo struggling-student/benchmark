@@ -38,6 +38,14 @@ load_cluster_config() {
     source "${config_path}"
     set +a
 
+    # A campaign can collect its runs under its own tree instead of the shared
+    # RESULTS_ROOT the config exports. The override has to be re-applied here
+    # because every entry point sources the config again, which would otherwise
+    # restore the configured value.
+    if [[ -n "${BENCH_RESULTS_ROOT:-}" ]]; then
+        export RESULTS_ROOT="${BENCH_RESULTS_ROOT}"
+    fi
+
     if [[ -n "${MODEL_CACHE_DIR:-}" && "${MODEL_CACHE_DIR}" != *'<'*'>'* ]]; then
         export HF_HUB_CACHE="${MODEL_CACHE_DIR}"
     fi

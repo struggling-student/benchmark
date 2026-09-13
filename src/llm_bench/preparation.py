@@ -71,7 +71,29 @@ def _resolved_revision(snapshot: Path) -> str | None:
     return None
 
 
-def _native_conversion_command(snapshot: Path, output: Path) -> list[str]:
+# Float GGUF variants come straight out of convert_hf_to_gguf.py at the matching
+# --outtype. Quantized variants are produced from the F16 base by llama-quantize.
+# BF16 is deliberately not routed through the F16 base: the source checkpoint is
+# BF16, so f16 -> bf16 would round-trip through a narrower exponent range and the
+# artifact would no longer be the model the upstream weights describe.
+_CONVERTER_OUTTYPE = {
+    "float32": "f32",
+    "float16": "f16",
+    "bfloat16": "bf16",
+}
+
+
+def _converter_outtype(variant_name: str, precision: str) -> str:
+    outtype = _CONVERTER_OUTTYPE.get(precision)
+    if outtype is None:
+        raise ConfigurationError(
+            f"variant {variant_name} has no quantization and precision {precision!r} "
+            "is not a llama.cpp converter output type"
+        )
+    return outtype
+
+
+def _native_conversion_command(snapshot: Path, output: Path, outtype: str) -> list[str]:
     script = os.environ.get("LLAMA_CPP_CONVERT_SCRIPT")
     if not script:
         raise ConfigurationError("LLAMA_CPP_CONVERT_SCRIPT is required for native conversion")
@@ -85,7 +107,23 @@ def _native_conversion_command(snapshot: Path, output: Path) -> list[str]:
         "--outfile",
         str(output),
         "--outtype",
-        "f16",
+        outtype,
+    ]
+
+
+def _conversion_command(
+    provider_name: str, snapshot: Path, output: Path, outtype: str
+) -> list[str]:
+    if provider_name == "native":
+        return _native_conversion_command(snapshot, output, outtype)
+    return [
+        "python3",
+        "/app/convert_hf_to_gguf.py",
+        str(snapshot),
+        "--outfile",
+        str(output),
+        "--outtype",
+        outtype,
     ]
 
 
@@ -286,12 +324,20 @@ def prepare_model(
             manifest_path,
         )
         return manifest
+    # Only quantized variants need the F16 base; a float variant is converted from
+    # the snapshot directly, so requesting bf16 alone must not force an F16 build.
+    needs_f16_base = any(
+        name == "f16" or model.variants[name].quantization for name in llamacpp_requested
+    )
     f16_artifact = model.variants.get("f16")
-    if f16_artifact is None or "llamacpp" not in f16_artifact.artifacts:
+    if needs_f16_base and (f16_artifact is None or "llamacpp" not in f16_artifact.artifacts):
         raise ConfigurationError("GGUF preparation requires an f16 llama.cpp artifact definition")
-    f16_name = f16_artifact.artifacts["llamacpp"].filename
-    assert f16_name is not None
-    f16_path = model_root / f16_name
+    f16_name = (
+        f16_artifact.artifacts["llamacpp"].filename
+        if f16_artifact is not None and "llamacpp" in f16_artifact.artifacts
+        else None
+    )
+    f16_path = model_root / f16_name if f16_name is not None else None
     produced: dict[str, dict[str, Any]] = {}
     provider_image = (
         os.environ.get("LLAMA_CPP_DOCKER_IMAGE")
@@ -333,56 +379,51 @@ def prepare_model(
 
     with tempfile.TemporaryDirectory(prefix="llm-bench-prepare-", dir=model_root) as temporary:
         temporary_root = Path(temporary)
-        reusable_f16 = _reusable_record(
-            previous_manifest,
-            model=model,
-            revision=resolved_revision,
-            variant="f16",
-            path=f16_path,
-        )
-        if reusable_f16:
-            logger.info("reusing existing f16 artifact: %s", f16_path)
-            produced["f16"] = reusable_f16
-        else:
-            logger.info("converting snapshot to f16 GGUF: %s", f16_path)
-            _assert_no_unproven_artifact(f16_path, "f16")
-            temporary_f16 = temporary_root / f16_name
-            command = (
-                _native_conversion_command(snapshot, temporary_f16)
-                if provider_name == "native"
-                else [
-                    "python3",
-                    "/app/convert_hf_to_gguf.py",
-                    str(snapshot),
-                    "--outfile",
-                    str(temporary_f16),
-                    "--outtype",
-                    "f16",
-                ]
+        if needs_f16_base:
+            assert f16_artifact is not None and f16_name is not None and f16_path is not None
+            reusable_f16 = _reusable_record(
+                previous_manifest,
+                model=model,
+                revision=resolved_revision,
+                variant="f16",
+                path=f16_path,
             )
-            _run(
-                _provider_command(provider_name, model, command, model_root, cache),
-                log,
-            )
-            if not temporary_f16.is_file():
-                raise ConfigurationError("converter completed without producing the F16 GGUF")
-            temporary_f16.replace(f16_path)
-            produced["f16"] = {
-                "path": str(f16_path),
-                "format": "gguf",
-                "precision": f16_artifact.precision,
-                "quantization": f16_artifact.quantization,
-                "size_bytes": f16_path.stat().st_size,
-                "sha256": sha256_file(f16_path),
-                "reused": False,
-                "arguments": [
-                    "SOURCE_SNAPSHOT",
-                    "--outfile",
-                    f16_name,
-                    "--outtype",
-                    "f16",
-                ],
-            }
+            if reusable_f16:
+                logger.info("reusing existing f16 artifact: %s", f16_path)
+                produced["f16"] = reusable_f16
+            else:
+                logger.info("converting snapshot to f16 GGUF: %s", f16_path)
+                _assert_no_unproven_artifact(f16_path, "f16")
+                temporary_f16 = temporary_root / f16_name
+                _run(
+                    _provider_command(
+                        provider_name,
+                        model,
+                        _conversion_command(provider_name, snapshot, temporary_f16, "f16"),
+                        model_root,
+                        cache,
+                    ),
+                    log,
+                )
+                if not temporary_f16.is_file():
+                    raise ConfigurationError("converter completed without producing the F16 GGUF")
+                temporary_f16.replace(f16_path)
+                produced["f16"] = {
+                    "path": str(f16_path),
+                    "format": "gguf",
+                    "precision": f16_artifact.precision,
+                    "quantization": f16_artifact.quantization,
+                    "size_bytes": f16_path.stat().st_size,
+                    "sha256": sha256_file(f16_path),
+                    "reused": False,
+                    "arguments": [
+                        "SOURCE_SNAPSHOT",
+                        "--outfile",
+                        f16_name,
+                        "--outtype",
+                        "f16",
+                    ],
+                }
 
         for name in llamacpp_requested:
             variant = model.variants[name]
@@ -403,11 +444,10 @@ def prepare_model(
                 produced[name] = reusable
                 continue
             _assert_no_unproven_artifact(destination, name)
-            if name != "f16":
-                temporary_output = temporary_root / artifact.filename
-                quantization = variant.quantization
-                if not quantization:
-                    raise ConfigurationError(f"variant {name} has no quantization method")
+            temporary_output = temporary_root / artifact.filename
+            quantization = variant.quantization
+            if quantization:
+                assert f16_name is not None and f16_path is not None
                 logger.info("quantizing %s -> %s (%s)", f16_path, destination, quantization)
                 command = (
                     _native_quantize_command(f16_path, temporary_output, quantization)
@@ -419,15 +459,27 @@ def prepare_model(
                         quantization,
                     ]
                 )
-                _run(
-                    _provider_command(provider_name, model, command, model_root, cache),
-                    log,
-                )
-                if not temporary_output.is_file():
-                    raise ConfigurationError(
-                        f"quantizer completed without producing variant {name}"
-                    )
-                temporary_output.replace(destination)
+                arguments = [f16_name, artifact.filename, quantization]
+                failure = f"quantizer completed without producing variant {name}"
+            else:
+                outtype = _converter_outtype(name, variant.precision)
+                logger.info("converting snapshot to %s GGUF: %s", outtype, destination)
+                command = _conversion_command(provider_name, snapshot, temporary_output, outtype)
+                arguments = [
+                    "SOURCE_SNAPSHOT",
+                    "--outfile",
+                    artifact.filename,
+                    "--outtype",
+                    outtype,
+                ]
+                failure = f"converter completed without producing variant {name}"
+            _run(
+                _provider_command(provider_name, model, command, model_root, cache),
+                log,
+            )
+            if not temporary_output.is_file():
+                raise ConfigurationError(failure)
+            temporary_output.replace(destination)
             produced[name] = {
                 "path": str(destination),
                 "format": artifact.format,
@@ -436,7 +488,7 @@ def prepare_model(
                 "size_bytes": destination.stat().st_size,
                 "sha256": sha256_file(destination),
                 "reused": False,
-                "arguments": [f16_name, artifact.filename, str(variant.quantization)],
+                "arguments": arguments,
             }
 
     manifest = {

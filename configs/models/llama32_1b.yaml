@@ -13,6 +13,9 @@ variants:
     artifacts:
       vllm:
         format: huggingface
+      llamacpp:
+        format: gguf
+        filename: llama32-1b-instruct-bf16.gguf
   f16:
     precision: float16
     quantization: null

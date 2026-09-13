@@ -2,6 +2,8 @@
 # Submit a benchmark on the CRESCO8 Xeon CPU Max HBM nodes.
 #
 #   scripts/submit_cresco8.sh --profile PROFILE.yaml --variant VARIANT [options]
+#   Options include --model, --workload, --partition, --nodelist, --time,
+#   --cpus-per-task, --dependency, --log-level, --results-root.
 #
 # Defaults target the verified cache-mode node cresco8-hbm15 in the one-hour
 # debug partition. Discovered with sinfo/scontrol: cresco8_hbm_dbg holds
@@ -25,6 +27,7 @@ TIME_LIMIT="01:00:00"
 CPUS_PER_TASK=112
 DEPENDENCY=""
 LOG_LEVEL=""
+RESULTS_ROOT_OVERRIDE=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --profile)   PROFILE="${2:?}";   shift 2 ;;
@@ -37,6 +40,7 @@ while [[ $# -gt 0 ]]; do
         --cpus-per-task) CPUS_PER_TASK="${2:?}"; shift 2 ;;
         --dependency) DEPENDENCY="${2:?}"; shift 2 ;;
         --log-level) LOG_LEVEL="${2:?}"; shift 2 ;;
+        --results-root) RESULTS_ROOT_OVERRIDE="${2:?}"; shift 2 ;;
         -h|--help)   sed -n '2,8p' "$0"; exit 0 ;;
         *) printf 'Unknown argument: %s\n' "$1" >&2; exit 2 ;;
     esac
@@ -81,6 +85,12 @@ fi
 # default (INFO unless CONFIG says otherwise).
 [[ -n "${LOG_LEVEL}" ]] && CONTAINER_ENV="${CONTAINER_ENV},LLM_BENCH_LOG_LEVEL=${LOG_LEVEL}"
 
+# Collect a campaign's runs under one tree instead of the shared RESULTS_ROOT.
+# Read after the cluster config is sourced (scripts/_common.sh), so it survives
+# the re-source that every entry point performs.
+JOB_ENV=""
+[[ -n "${RESULTS_ROOT_OVERRIDE}" ]] && JOB_ENV=",BENCH_RESULTS_ROOT=${RESULTS_ROOT_OVERRIDE}"
+
 sbatch \
   --job-name="llmbench-${WORKLOAD_NAME}-${PROFILE_NAME}" \
   --partition="${PARTITION}" \
@@ -91,5 +101,5 @@ sbatch \
   --time="${TIME_LIMIT}" \
   --output="${LOGS}/%x-%j.out" \
   --error="${LOGS}/%x-%j.err" \
-  --export=ALL,BENCH_CONFIG="${CONFIG}",MODEL_CONFIG="${MODEL}",WORKLOAD_CONFIG="${WORKLOAD}",PROFILE_CONFIG="${PROFILE}",BENCH_PROVIDER=apptainer,MODEL_VARIANT="${VARIANT}","${CONTAINER_ENV}" \
+  --export=ALL,BENCH_CONFIG="${CONFIG}",MODEL_CONFIG="${MODEL}",WORKLOAD_CONFIG="${WORKLOAD}",PROFILE_CONFIG="${PROFILE}",BENCH_PROVIDER=apptainer,MODEL_VARIANT="${VARIANT}","${CONTAINER_ENV}""${JOB_ENV}" \
   "${REPO}/slurm/benchmark.sbatch"

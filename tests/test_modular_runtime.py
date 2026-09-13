@@ -583,7 +583,8 @@ def test_model_preparation_records_revision_hashes_and_quantization(
 def test_vllm_bf16_preparation_only_caches_the_source_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    model = load_model_manifest(ROOT / "configs/models/llama32_1b.yaml")
+    # llama31_8b's bf16 is vLLM-only; llama32_1b's also carries a GGUF artifact.
+    model = load_model_manifest(ROOT / "configs/models/llama31_8b.yaml")
     snapshot = tmp_path / "cache/models--test/snapshots" / ("d" * 40)
     snapshot.mkdir(parents=True)
     monkeypatch.setattr("llm_bench.preparation._snapshot", lambda *args, **kwargs: snapshot)
@@ -605,6 +606,44 @@ def test_vllm_bf16_preparation_only_caches_the_source_snapshot(
     assert manifest["snapshot_path"] == str(snapshot)
     assert manifest["tool_provenance"] == {"operation": "huggingface_snapshot_only"}
     assert manifest["artifacts"] == {}
+
+
+def test_bf16_gguf_is_converted_from_the_snapshot_not_from_the_f16_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = load_model_manifest(ROOT / "configs/models/llama32_1b.yaml")
+    snapshot = tmp_path / "cache/models--test/snapshots" / ("e" * 40)
+    snapshot.mkdir(parents=True)
+    monkeypatch.setattr("llm_bench.preparation._snapshot", lambda *args, **kwargs: snapshot)
+    monkeypatch.setenv("LLAMA_CPP_CONVERT_SCRIPT", str(tmp_path / "convert_hf_to_gguf.py"))
+    (tmp_path / "convert_hf_to_gguf.py").write_text("", encoding="utf-8")
+
+    commands: list[list[str]] = []
+
+    def record(command: list[str], log: Path) -> None:
+        commands.append(list(command))
+        # The converter writes to the temporary path that follows --outfile.
+        Path(command[command.index("--outfile") + 1]).write_bytes(b"GGUF")
+
+    monkeypatch.setattr("llm_bench.preparation._run", record)
+
+    manifest = prepare_model(
+        model,
+        provider_name="native",
+        variants=("bf16",),
+        artifact_root=tmp_path / "artifacts",
+        cache_root=tmp_path / "cache",
+    )
+
+    assert len(commands) == 1, "bf16 must not also build the f16 base"
+    assert commands[0][-2:] == ["--outtype", "bf16"]
+    assert str(snapshot) in commands[0]
+    assert "llama-quantize" not in " ".join(commands[0])
+    assert set(manifest["artifacts"]) == {"bf16"}
+    record_bf16 = manifest["artifacts"]["bf16"]
+    assert record_bf16["precision"] == "bfloat16"
+    assert record_bf16["quantization"] is None
+    assert record_bf16["path"].endswith("llama32-1b-instruct-bf16.gguf")
 
 
 def test_dry_run_contains_provider_wrapped_server_argv(
