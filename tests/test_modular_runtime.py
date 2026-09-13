@@ -451,7 +451,9 @@ def test_registered_metric_parsers_use_explicit_raw_fixtures(
 def test_telemetry_collectors_keep_process_docker_gpu_and_rapl_scopes_separate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("llm_bench.telemetry._process_sample", lambda pid: (pid / 10, 12.0))
+    monkeypatch.setattr(
+        "llm_bench.telemetry._process_sample", lambda pid, tracked=None: (pid / 10, 12.0)
+    )
     monkeypatch.setattr("llm_bench.telemetry._docker_sample", lambda name: (3.0, len(name)))
     monkeypatch.setattr("llm_bench.telemetry._gpu_sample", lambda: (4.0, 5.0, 6.0))
     energies = iter((10.0, 12.0))

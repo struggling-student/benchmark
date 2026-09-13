@@ -11,7 +11,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 
 def _number(value: str) -> float | None:
@@ -21,20 +21,31 @@ def _number(value: str) -> float | None:
         return None
 
 
-def _process_sample(pid: int) -> tuple[float | None, float | None]:
+def _process_sample(
+    pid: int, tracked: dict[int, Any] | None = None
+) -> tuple[float | None, float | None]:
+    # cpu_percent(interval=None) reports the load since the previous call *on
+    # that same Process object* and returns 0.0 the first time it is asked.
+    # Re-deriving the objects every sample therefore pins CPU utilisation at
+    # zero forever, so the caller keeps them alive in `tracked`.
     try:
         import psutil
     except ImportError:
         return None, None
+    if tracked is None:
+        tracked = {}
     try:
-        root = psutil.Process(pid)
-        processes = [root, *root.children(recursive=True)]
-        cpu = sum(
-            process.cpu_percent(interval=None)
-            for process in processes
-            if process.is_running()
-        )
-        rss = sum(process.memory_info().rss for process in processes if process.is_running())
+        root = tracked.get(pid)
+        if root is None:
+            root = tracked[pid] = psutil.Process(pid)
+        processes = []
+        for process in (root, *root.children(recursive=True)):
+            processes.append(tracked.setdefault(process.pid, process))
+        live = [process for process in processes if process.is_running()]
+        cpu = sum(process.cpu_percent(interval=None) for process in live)
+        rss = sum(process.memory_info().rss for process in live)
+        for dead in [key for key, value in tracked.items() if not value.is_running()]:
+            del tracked[dead]
         return cpu, rss / (1024 * 1024)
     except (psutil.Error, OSError):
         return None, None
@@ -124,10 +135,11 @@ class ProcessTelemetryCollector:
 
     def __init__(self, pid: int) -> None:
         self.pid = pid
+        self._tracked: dict[int, Any] = {}
 
     def sample(self, monotonic_time: float) -> dict[str, float | None]:
         del monotonic_time
-        cpu, memory = _process_sample(self.pid)
+        cpu, memory = _process_sample(self.pid, self._tracked)
         return {"cpu_utilization_percent": cpu, "rss_mib": memory}
 
 
