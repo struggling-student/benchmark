@@ -1,0 +1,30 @@
+schema_version: "2.0"
+profile_name: vllm_cpu_avx512_hbm_cache
+backend: vllm
+hardware_type: cpu
+cpu_isa: avx512
+cpu_features_required:
+  - avx512f
+  - avx512bw
+  - avx512dq
+  - avx512vl
+  - avx512_vnni
+  - avx512_bf16
+host: 127.0.0.1
+port: 8000
+tensor_parallel_size: 2
+gpu_memory_utilization: null
+vllm_cpu_kvcache_space_gib: 8
+vllm_cpu_omp_threads_bind: auto
+vllm_cpu_num_reserved_cpu: 1
+thread_count: null
+thread_count_batch: null
+cpu_mask: null
+numa_policy: null
+memory_binding: null
+memory_type: hbm2e+ddr5
+memory_mode: cache
+gpu_layers: null
+batch_size: null
+ubatch_size: null
+parallel_slots: null
