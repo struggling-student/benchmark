@@ -31,6 +31,9 @@ huggingface-cache/
 results/*
 !results/.gitkeep
 
+# Local scratch: extracted paper text, PDFs, and other working material
+tmp/
+
 # Slurm and local run logs
 slurm-*.out
 slurm-*.err
