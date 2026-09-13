@@ -116,7 +116,7 @@ def test_vllm_cpu_amx_profile_resolves_bf16_runtime_controls() -> None:
 def test_vllm_cpu_flat_profile_binds_a_single_memory_tier() -> None:
     config = load_composed_experiment(
         ROOT / "configs/models/llama32_1b.yaml",
-        ROOT / "configs/workloads/smoke.yaml",
+        ROOT / "configs/workloads/fixed_32_32.yaml",
         ROOT / "configs/profiles/vllm_cpu_amx_hbm_flat.yaml",
         provider="native",
         variant="bf16",
