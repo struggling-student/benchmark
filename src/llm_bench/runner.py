@@ -24,6 +24,7 @@ from .api_client import run_api_benchmark
 from .backends import BackendAdapter, endpoint, get_backend
 from .config import ConfigurationError, ExperimentConfig
 from .hardware import validate_hardware
+from .logging_config import format_argv, format_json
 from .measurements import create_measurements, write_measurements
 from .metadata import collect_metadata, write_metadata
 from .preparation import load_artifact_manifest, sha256_file
@@ -160,8 +161,10 @@ class OfflineBenchmarkRunner:
         config = context.config
         command = context.backend.offline_command(config, output)
         wrapped = context.provider.wrap(command, config, context.provider_context)
-        logger.debug("backend command: %s", command)
-        logger.debug("wrapped (provider=%s) command: %s", config.provider, wrapped)
+        logger.debug("backend command:\n  %s", format_argv(command))
+        logger.debug(
+            "wrapped (provider=%s) command:\n  %s", config.provider, format_argv(wrapped)
+        )
         output.parent.mkdir(parents=True, exist_ok=True)
         log_path = output.with_suffix(".log")
         stdout_target = output if config.backend == "llamacpp" else log_path
@@ -344,8 +347,10 @@ class ApiBenchmarkRunner:
             context.provider_context,
             server=True,
         )
-        logger.debug("backend server command: %s", server_command)
-        logger.debug("wrapped (provider=%s) server command: %s", config.provider, wrapped)
+        logger.debug("backend server command:\n  %s", format_argv(server_command))
+        logger.debug(
+            "wrapped (provider=%s) server command:\n  %s", config.provider, format_argv(wrapped)
+        )
         server_log = (context.run_directory / "server.log").open("w", encoding="utf-8")
         server: subprocess.Popen[Any] | None = None
         try:
@@ -458,7 +463,7 @@ def validate_runtime(
     backend = get_backend(config.backend)
     provider = get_provider(config.provider)
     hardware, hardware_checks = validate_hardware(config)
-    logger.debug("hardware checks: %s", hardware_checks)
+    logger.debug("hardware checks:\n%s", format_json(hardware_checks))
     checks = [
         *hardware_checks,
         *backend.validate(config, require_artifact=require_artifact),
@@ -508,7 +513,7 @@ def validate_runtime(
         server_command = provider.wrap(
             backend.server_command(config), config, provider_context, server=True
         )
-    logger.debug("runtime validation checks: %s", checks)
+    logger.debug("runtime validation checks:\n%s", format_json(checks))
     return {
         "status": "valid",
         "experiment_name": config.experiment_name,

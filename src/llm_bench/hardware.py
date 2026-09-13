@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import ConfigurationError, ExperimentConfig
+from .logging_config import format_json
 
 logger = logging.getLogger(__name__)
 
@@ -295,7 +296,7 @@ def validate_hardware(config: ExperimentConfig) -> tuple[dict[str, Any], list[st
     """Validate configured CPU/ISA/HBM expectations on the execution node."""
 
     report = inspect_hardware(config)
-    logger.debug("hardware inspection report: %s", report)
+    logger.debug("hardware inspection report:\n%s", format_json(report))
     report["memory_binding_requested"] = config.memory_binding
     report["memory_binding_resolved"] = None
     checks = [f"hardware target: {config.hardware_type}"]

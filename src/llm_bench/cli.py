@@ -19,7 +19,7 @@ from .config import (
     load_composed_experiment,
     load_model_manifest,
 )
-from .logging_config import LOG_LEVELS, configure_logging
+from .logging_config import LOG_LEVELS, configure_logging, format_json
 from .preparation import prepare_model
 from .results import ResultError, compare_paths
 from .runner import run_experiment, validate_runtime
@@ -54,7 +54,7 @@ def _composed(args: argparse.Namespace):
         config.backend,
         config.benchmark_type,
     )
-    logger.debug("resolved experiment configuration: %s", config.to_dict())
+    logger.debug("resolved experiment configuration:\n%s", format_json(config.to_dict()))
     return config
 
 
@@ -69,7 +69,7 @@ def _preflight(args: argparse.Namespace) -> int:
     logger.info("running preflight checks for %s", config.experiment_name)
     report = validate_runtime(config, require_artifact=not args.allow_missing_artifact)
     logger.info("preflight status: %s", report["status"])
-    logger.debug("preflight report: %s", report)
+    logger.debug("preflight report:\n%s", format_json(report))
     print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
     return 0
 
