@@ -46,8 +46,15 @@ def _prompt(tokenizer: Tokenizer, rng: random.Random, length: int) -> tuple[str,
     candidates = [index for index in range(tokenizer.vocab_size) if index not in special]
     if not candidates:
         raise ConfigurationError("tokenizer has no usable non-special tokens")
+    # Resampling random token ids until one survives a decode/encode round trip
+    # cannot work at realistic prompt lengths.  The decoded text re-tokenizes
+    # into more pieces than it started with, and the drift grows with length:
+    # for Llama-3.2 at length 256 the re-encoding was never shorter than 260
+    # over 60 draws, so every attempt is rejected and the loop always exhausts.
+    # Correct the length instead of resampling.  This reaches a fixed point in
+    # about two iterations and stays deterministic for a given seed.
+    token_ids = [rng.choice(candidates) for _ in range(length)]
     for _ in range(100):
-        token_ids = [rng.choice(candidates) for _ in range(length)]
         text = tokenizer.decode(
             token_ids,
             skip_special_tokens=True,
@@ -56,6 +63,12 @@ def _prompt(tokenizer: Tokenizer, rng: random.Random, length: int) -> tuple[str,
         round_trip = tokenizer.encode(text, add_special_tokens=False)
         if text and len(round_trip) == length:
             return text, round_trip
+        token_ids = (
+            round_trip[:length]
+            if len(round_trip) > length
+            else round_trip
+            + [rng.choice(candidates) for _ in range(length - len(round_trip))]
+        )
     raise ConfigurationError(
         f"could not create a stable {length}-token prompt after 100 deterministic attempts"
     )
