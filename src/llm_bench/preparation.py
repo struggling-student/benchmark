@@ -54,6 +54,13 @@ def _snapshot(model: ModelManifest, cache_root: Path, *, local_files_only: bool)
             cache_dir=cache_root,
             local_files_only=local_files_only,
             token=os.environ.get("HF_TOKEN"),
+            # Meta's repositories ship a second copy of the weights as a
+            # consolidated PyTorch checkpoint under original/, which neither
+            # vLLM nor convert_hf_to_gguf.py reads. Since huggingface_hub 1.31
+            # one absent file makes the whole cached snapshot "incomplete", so a
+            # cache that is entirely sufficient for conversion would otherwise
+            # fail to resolve. VllmAdapter.validate skips it for the same reason.
+            ignore_patterns=["original/*"],
         )
     except Exception as exc:
         logger.error("model snapshot preparation failed: %s: %s", type(exc).__name__, exc)
