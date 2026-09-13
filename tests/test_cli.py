@@ -47,3 +47,14 @@ def test_main_configures_llm_bench_logger_from_flag(
     main(["--log-level", "DEBUG", "dashboard"])
     assert logging.getLogger("llm_bench").level == logging.DEBUG
 
+
+def test_cli_logger_stays_in_the_llm_bench_hierarchy() -> None:
+    # scripts/run_benchmark.sh invokes `python -m llm_bench.cli`, which makes
+    # this module's __name__ "__main__" at runtime. A logger bound to
+    # __name__ would then sit outside the "llm_bench" logger tree and never
+    # reach the handler configure_logging() installs, so cli.py must bind an
+    # explicit "llm_bench.cli" name instead.
+    import llm_bench.cli as cli_module
+
+    assert cli_module.logger.name == "llm_bench.cli"
+

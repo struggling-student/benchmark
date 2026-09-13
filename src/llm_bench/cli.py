@@ -24,7 +24,11 @@ from .preparation import prepare_model
 from .results import ResultError, compare_paths
 from .runner import run_experiment, validate_runtime
 
-logger = logging.getLogger(__name__)
+# Not __name__: `python -m llm_bench.cli` (used by scripts/run_benchmark.sh)
+# runs this module as "__main__", which sits outside the llm_bench logger
+# hierarchy configure_logging() sets up and would silently drop every message
+# logged here.
+logger = logging.getLogger("llm_bench.cli")
 
 
 def _composed(args: argparse.Namespace):
