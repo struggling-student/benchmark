@@ -21,6 +21,7 @@ Profiles:
 
 - `vllm_gpu.yaml`
 - `vllm_cpu_amx_hbm_cache.yaml` (Xeon Max cache-mode vLLM CPU, BF16/AMX first treatment)
+- `vllm_cpu_amx_hbm_flat.yaml` (Xeon Max flat-mode HBM placement, BF16/AMX vLLM CPU)
 - `llamacpp_cpu.yaml` (portable CPU baseline with automatic ISA dispatch)
 - `llamacpp_cpu_avx2.yaml` (explicit AVX2 build)
 - `llamacpp_cpu_avx512.yaml` (explicit AVX-512 build)
@@ -30,13 +31,20 @@ Profiles:
 - `llamacpp_cpu_amx_hbm_cache.yaml` (CRESCO8 Xeon Max cache-mode AMX treatment)
 - `llamacpp_cuda.yaml` (change `gpu_layers` from `all` to a number for partial offload).
 
-The two flat profiles use `memory_binding: hbm`. At preflight and launch time this is resolved to
+The three flat profiles use `memory_binding: hbm`. At preflight and launch time this is resolved to
 the memory-only NUMA nodes discovered in that allocation; numeric node IDs are never assumed by the
 profile. To measure DDR on the same flat-mode node, copy the relevant profile and change
 `memory_type` to `ddr5` and `memory_binding` to `ddr`.
 
+Flat-mode binding is backend-independent: `memory_binding` is an OS-level NUMA policy that the
+providers apply around whichever runtime is launched (`numactl --membind` for the native and
+Apptainer providers, `docker run --cpuset-mems` for Docker), so it is available to both the vLLM
+and llama.cpp CPU profiles. GPU profiles reject it.
+
 On CRESCO8, `cresco8-hbm14` is configured in flat mode. Allocation identity is not trusted as the
 only evidence: the benchmark still verifies the topology inside every job before inference starts.
+That node has been unavailable since 2026-09-10, so `vllm_cpu_amx_hbm_flat.yaml` is validated by
+configuration and preflight logic only; it has not yet produced a measured run.
 
 All three providers can execute a compatible profile. Use the `bf16` model variant for the vLLM
 CPU AMX profile. Only llama.cpp supports `q8_0` and `q4_k_m`; quantized-to-F16 results are

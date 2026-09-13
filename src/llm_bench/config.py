@@ -502,6 +502,9 @@ def load_execution_profile(path: str | Path) -> ExecutionProfile:
         parallel_slots=_optional_integer("parallel_slots", data.get("parallel_slots")),
         source_path=source,
     )
+    # memory_binding is deliberately absent here: it is an OS-level NUMA policy that
+    # the providers apply around any backend (numactl --membind, or --cpuset-mems for
+    # Docker), not a llama.cpp argv control. GPU profiles reject it further down.
     if backend == "vllm" and any(
         value is not None
         for value in (
@@ -509,7 +512,6 @@ def load_execution_profile(path: str | Path) -> ExecutionProfile:
             profile.thread_count_batch,
             profile.cpu_mask,
             profile.numa_policy,
-            profile.memory_binding,
             profile.gpu_layers,
             profile.batch_size,
             profile.ubatch_size,

@@ -38,7 +38,8 @@ def test_shipped_manifests_compose_complete_f16_matrix() -> None:
         for profile in profiles
     ]
 
-    assert len(resolved) == 60
+    assert (len(models), len(workloads), len(profiles)) == (2, 3, 11)
+    assert len(resolved) == len(models) * len(workloads) * len(profiles)
     assert {item.backend for item in resolved} == {"vllm", "llamacpp"}
     assert {item.benchmark_type for item in resolved} == {"smoke", "offline", "serving"}
     assert all(item.tokenizer == item.model_id for item in resolved)
@@ -79,6 +80,47 @@ def test_vllm_cpu_amx_profile_resolves_bf16_runtime_controls() -> None:
     assert config.vllm_cpu_kvcache_space_gib == 8
     assert config.vllm_cpu_omp_threads_bind == "auto"
     assert config.vllm_cpu_num_reserved_cpu == 1
+
+
+def test_vllm_cpu_flat_profile_binds_a_single_memory_tier() -> None:
+    config = load_composed_experiment(
+        ROOT / "configs/models/llama32_1b.yaml",
+        ROOT / "configs/workloads/smoke.yaml",
+        ROOT / "configs/profiles/vllm_cpu_amx_hbm_flat.yaml",
+        provider="native",
+        variant="bf16",
+        artifact_root="/models",
+    )
+
+    assert config.backend == "vllm"
+    assert config.hardware_type == "cpu"
+    assert config.memory_mode == "flat"
+    assert config.memory_type == "hbm2e"
+    assert config.memory_binding == "hbm"
+
+
+def test_vllm_gpu_profile_still_rejects_memory_binding(tmp_path: Path) -> None:
+    original = (ROOT / "configs/profiles/vllm_gpu.yaml").read_text(encoding="utf-8")
+    profile = tmp_path / "gpu.yaml"
+    profile.write_text(
+        original.replace("memory_binding: null", "memory_binding: hbm"), encoding="utf-8"
+    )
+
+    with pytest.raises(ConfigurationError, match="GPU profiles cannot contain CPU memory"):
+        load_execution_profile(profile)
+
+
+def test_vllm_profile_still_rejects_llamacpp_controls(tmp_path: Path) -> None:
+    original = (
+        ROOT / "configs/profiles/vllm_cpu_amx_hbm_flat.yaml"
+    ).read_text(encoding="utf-8")
+    profile = tmp_path / "vllm-threads.yaml"
+    profile.write_text(
+        original.replace("thread_count: null", "thread_count: 112"), encoding="utf-8"
+    )
+
+    with pytest.raises(ConfigurationError, match="llama.cpp execution controls"):
+        load_execution_profile(profile)
 
 
 def test_flat_single_tier_profile_requires_memory_binding(tmp_path: Path) -> None:

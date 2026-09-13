@@ -122,6 +122,27 @@ def test_native_provider_selects_isa_specific_binary_directory(
     assert wrapped[0] == str(binary)
 
 
+def _vllm_cpu_config(**overrides: Any):
+    values: dict[str, Any] = {
+        "backend": "vllm",
+        "hardware_type": "cpu",
+        "artifact_format": "huggingface",
+        "artifact_path": None,
+        "gpu_layers": None,
+        "batch_size": None,
+        "ubatch_size": None,
+        "parallel_slots": None,
+        "thread_count": None,
+        "cpu_isa_target": "amx",
+        "cpu_features_required": ("amx_tile", "amx_bf16"),
+        "vllm_cpu_kvcache_space_gib": 8,
+        "vllm_cpu_omp_threads_bind": "auto",
+        "vllm_cpu_num_reserved_cpu": 1,
+    }
+    values.update(overrides)
+    return _config(**values)
+
+
 def test_native_vllm_cpu_runtime_uses_dedicated_binary_and_profile_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -130,22 +151,7 @@ def test_native_vllm_cpu_runtime_uses_dedicated_binary_and_profile_environment(
     binary.chmod(0o755)
     monkeypatch.setenv("VLLM_CPU_BIN", str(binary))
     monkeypatch.setattr("llm_bench.providers.shutil.which", lambda name: f"/usr/bin/{name}")
-    config = _config(
-        backend="vllm",
-        hardware_type="cpu",
-        artifact_format="huggingface",
-        artifact_path=None,
-        gpu_layers=None,
-        batch_size=None,
-        ubatch_size=None,
-        parallel_slots=None,
-        thread_count=None,
-        cpu_isa_target="amx",
-        cpu_features_required=("amx_tile", "amx_bf16"),
-        vllm_cpu_kvcache_space_gib=8,
-        vllm_cpu_omp_threads_bind="auto",
-        vllm_cpu_num_reserved_cpu=1,
-    )
+    config = _vllm_cpu_config()
 
     wrapped = NativeProvider().wrap(
         ["vllm", "serve", "test/model"], config, ProviderContext(tmp_path, None, None)
@@ -158,6 +164,45 @@ def test_native_vllm_cpu_runtime_uses_dedicated_binary_and_profile_environment(
         "VLLM_CPU_NUM_OF_RESERVED_CPU=1",
         str(binary),
     ]
+
+
+def test_native_vllm_cpu_flat_runtime_binds_requested_memory_nodes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binary = tmp_path / "vllm"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o755)
+    monkeypatch.setenv("VLLM_CPU_BIN", str(binary))
+    monkeypatch.setattr("llm_bench.providers.shutil.which", lambda name: f"/usr/bin/{name}")
+    config = _vllm_cpu_config(
+        memory_mode="flat", memory_type="hbm2e", memory_binding="2,3"
+    )
+
+    wrapped = NativeProvider().wrap(
+        ["vllm", "serve", "test/model"], config, ProviderContext(tmp_path, None, None)
+    )
+
+    assert wrapped[:3] == ["/usr/bin/numactl", "--membind", "2,3"]
+    assert wrapped[3] == "/usr/bin/env"
+    assert str(binary) in wrapped
+
+
+def test_docker_vllm_cpu_flat_runtime_binds_requested_memory_nodes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VLLM_CPU_DOCKER_IMAGE", "docker.io/vllm/vllm-openai@sha256:" + "b" * 64)
+    monkeypatch.setattr("llm_bench.providers.shutil.which", lambda name: f"/usr/bin/{name}")
+    config = _vllm_cpu_config(
+        provider="docker", memory_mode="flat", memory_type="hbm2e", memory_binding="2,3"
+    )
+
+    wrapped = DockerProvider().wrap(
+        ["vllm", "serve", "test/model"],
+        config,
+        ProviderContext(tmp_path, None, None, "bench-container"),
+    )
+
+    assert wrapped[wrapped.index("--cpuset-mems") + 1] == "2,3"
 
 
 def test_container_providers_pin_images_and_build_safe_argv(
