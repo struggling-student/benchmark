@@ -1,0 +1,17 @@
+# Literature-aligned long-context shape: Fang et al. (2025) use
+# approximately 30K-token LongBench/NarrativeQA prompts and decode 10K tokens.
+schema_version: "2.0"
+workload_key: fixed_30000_10000
+benchmark_type: offline
+seed: 42
+number_of_prompts: 1
+input_length: 30000
+output_length: 10000
+temperature: null
+top_p: null
+ignore_eos: null
+request_rate: null
+maximum_concurrency: null
+repetitions: 3
+warmup_runs: 1
+telemetry_interval_ms: 1000

@@ -12,10 +12,9 @@ Models:
 
 Workloads:
 
-- `smoke.yaml`: two short API requests and no measured-performance claim.
-- `offline.yaml`: native throughput tools with outer warm-up and three measured repetitions.
-- `serving.yaml`: deterministic streamed prompts, fixed generation controls, request rate, and
-  concurrency.
+- `fixed_*.yaml`: deterministic offline token shapes reproduced from the inference literature.
+  No generic or synthetic-only workload is shipped; see
+  [Literature-matched fixed-length workloads](#literature-matched-fixed-length-workloads).
 
 Profiles:
 
@@ -84,7 +83,7 @@ checks, or `run --dry-run` for the complete resolved configuration and provider 
 ```bash
 COMMON=(
   --model configs/models/llama32_1b.yaml
-  --workload configs/workloads/smoke.yaml
+  --workload configs/workloads/fixed_32_32.yaml
   --profile configs/profiles/llamacpp_cuda.yaml
   --provider apptainer
   --variant f16
@@ -112,14 +111,50 @@ resolve -> preflight -> initialize result -> start backend -> readiness/model ch
         -> warm-ups -> measured repetitions -> normalize -> signal-safe cleanup
 ```
 
-Smoke and serving start an OpenAI-compatible server, verify `/health` and `/v1/models`, generate and
-persist deterministic exact-length prompts with the canonical tokenizer, then use the same streaming
-client for vLLM and llama.cpp. The client applies explicit maximum tokens, temperature, top-p, EOS,
-seed, request-rate, and concurrency controls.
-
-Offline invokes `vllm bench throughput` or `llama-bench`. The requested prompt/generation lengths
+All shipped literature workloads invoke `vllm bench throughput` or `llama-bench`. The requested prompt/generation lengths
 and repetition count are mapped to their native flags, original JSON is retained, and llama-bench's
 discarded internal warm-up is documented separately from configured outer warm-ups.
+
+The codebase retains the OpenAI-compatible API runner for a future literature-backed trace such as
+ShareGPT, but no generic serving or smoke configuration is part of the benchmark catalog.
+
+## Literature-matched fixed-length workloads
+
+The fixed-length presets reproduce the reported prompt/generation pairs from the directly relevant
+systems papers. The shipped model manifests use the standard
+[Llama 3.1 8B](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct) and
+[Llama 3.2 1B](https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct) native context limit of
+131,072 tokens rather than the legacy 8,192-token deployment cap. Paper-reported token lengths are
+exact unless marked approximate; harness controls remain standardized where a paper does not report
+an equivalent backend-neutral value. This limit also applies to this benchmark's GGUF conversions
+of those standard checkpoints; they are not Meta's separately released 8K-context quantized models.
+
+| Workload | Input | Output | Source |
+| --- | ---: | ---: | --- |
+| `fixed_32_32.yaml` | 32 | 32 | [Shen et al. (2023), Table 3](https://arxiv.org/html/2311.00502) |
+| `fixed_128_32.yaml` | 128 | 32 | [Na et al. (2024), default evaluation](https://seonjinna.github.io/assets/pdf/iiswc24_CPULLM.pdf) |
+| `fixed_256_32.yaml` | 256 | 32 | Na et al. sequence-length sweep; [FlexGen Table 14](https://proceedings.mlr.press/v202/sheng23a/sheng23a.pdf) |
+| `fixed_512_32.yaml` | 512 | 32 | Na et al. sequence-length sweep; FlexGen main setup/Table 15 |
+| `fixed_1024_32.yaml` | 1,024 | 32 | Na et al. sequence-length sweep; FlexGen Table 16 |
+| `fixed_128_128.yaml` | 128 | 128 | FlexGen Table 17 |
+| `fixed_512_8.yaml` | 512 | 8 | FlexGen Table 18 |
+| `fixed_512_128.yaml` | 512 | 128 | [THInfer ablation setup](https://arxiv.org/html/2605.25655); [Kurt et al. llama.cpp `pp512`/`tg128`](https://arxiv.org/html/2601.14277) |
+| `fixed_1024_128.yaml` | 1,024 | 128 | THInfer throughput comparison |
+| `fixed_30000_10000.yaml` | ≈30,000 | 10,000 | [Fang et al. LongBench/NarrativeQA long-context workload](https://arxiv.org/html/2508.13231) |
+
+These presets align token shape, not every experimental condition. In particular, Na et al.'s
+static batch-size sweep (1--32), FlexGen's engine-specific effective batches, and THInfer's device
+counts do not map to `number_of_prompts`. For vLLM offline runs that field becomes `--num-prompts`;
+for llama.cpp it becomes the native `llama-bench` repetition count. Those native offline tools also
+time different scopes, so their results remain descriptive across backends.
+
+Papers that report only a context length or next-token latency without a generation length are not
+encoded as fixed prompt/generation pairs. NoMAD's variable-length prompts are also not represented
+as one fixed input length; doing so would falsely turn its “up to 16K” distribution into an exact
+shape.
+
+The published measurements, hardware and software conditions, and valid comparison method for
+every preset are recorded in [06 - Literature result baselines](06_LITERATURE_RESULTS.md).
 
 The shell wrapper is useful when the environment is stored in the private cluster config:
 
@@ -127,7 +162,7 @@ The shell wrapper is useful when the environment is stored in the private cluste
 bash scripts/run_benchmark.sh \
   --config configs/cluster/sapienza.env \
   --model configs/models/llama32_1b.yaml \
-  --workload configs/workloads/serving.yaml \
+  --workload configs/workloads/fixed_128_32.yaml \
   --profile configs/profiles/vllm_gpu.yaml \
   --provider native --variant f16
 ```
@@ -139,7 +174,7 @@ request. Supply verified values to `sbatch`:
 
 ```bash
 sbatch <SITE_RESOURCE_OPTIONS> \
-  --export=ALL,BENCH_CONFIG="$PWD/configs/cluster/sapienza.env",MODEL_CONFIG="$PWD/configs/models/llama32_1b.yaml",WORKLOAD_CONFIG="$PWD/configs/workloads/serving.yaml",PROFILE_CONFIG="$PWD/configs/profiles/llamacpp_cuda.yaml",BENCH_PROVIDER=apptainer,MODEL_VARIANT=f16 \
+  --export=ALL,BENCH_CONFIG="$PWD/configs/cluster/sapienza.env",MODEL_CONFIG="$PWD/configs/models/llama32_1b.yaml",WORKLOAD_CONFIG="$PWD/configs/workloads/fixed_128_32.yaml",PROFILE_CONFIG="$PWD/configs/profiles/llamacpp_cuda.yaml",BENCH_PROVIDER=apptainer,MODEL_VARIANT=f16 \
   slurm/benchmark.sbatch
 ```
 

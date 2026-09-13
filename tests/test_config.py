@@ -38,17 +38,48 @@ def test_shipped_manifests_compose_complete_f16_matrix() -> None:
         for profile in profiles
     ]
 
-    assert (len(models), len(workloads), len(profiles)) == (2, 3, 11)
+    assert (len(models), len(workloads), len(profiles)) == (2, 10, 12)
     assert len(resolved) == len(models) * len(workloads) * len(profiles)
     assert {item.backend for item in resolved} == {"vllm", "llamacpp"}
-    assert {item.benchmark_type for item in resolved} == {"smoke", "offline", "serving"}
+    assert {item.benchmark_type for item in resolved} == {"offline"}
+    assert {item.max_model_len for item in resolved} == {131072}
     assert all(item.tokenizer == item.model_id for item in resolved)
+
+
+def test_literature_matched_workloads_preserve_reported_token_shapes() -> None:
+    expected = {
+        "fixed_32_32": (32, 32),
+        "fixed_128_32": (128, 32),
+        "fixed_256_32": (256, 32),
+        "fixed_512_32": (512, 32),
+        "fixed_1024_32": (1024, 32),
+        "fixed_128_128": (128, 128),
+        "fixed_512_8": (512, 8),
+        "fixed_512_128": (512, 128),
+        "fixed_1024_128": (1024, 128),
+        "fixed_30000_10000": (30000, 10000),
+    }
+
+    actual = {}
+    for path in (ROOT / "configs/workloads").glob("*.yaml"):
+        workload = load_workload(path)
+        actual[workload.workload_key] = (workload.input_length, workload.output_length)
+
+    assert actual == expected
+
+
+def test_literature_results_document_covers_every_shipped_workload() -> None:
+    documentation = (ROOT / "docs/06_LITERATURE_RESULTS.md").read_text(encoding="utf-8")
+
+    for path in (ROOT / "configs/workloads").glob("*.yaml"):
+        workload = load_workload(path)
+        assert f"`{workload.workload_key}`" in documentation
 
 
 def test_cpu_isa_and_hbm_mode_are_part_of_resolved_profile() -> None:
     config = load_composed_experiment(
         ROOT / "configs/models/llama32_1b.yaml",
-        ROOT / "configs/workloads/offline.yaml",
+        ROOT / "configs/workloads/fixed_128_32.yaml",
         ROOT / "configs/profiles/llamacpp_cpu_amx_hbm_cache.yaml",
         provider="native",
         variant="f16",
@@ -65,7 +96,7 @@ def test_cpu_isa_and_hbm_mode_are_part_of_resolved_profile() -> None:
 def test_vllm_cpu_amx_profile_resolves_bf16_runtime_controls() -> None:
     config = load_composed_experiment(
         ROOT / "configs/models/llama32_1b.yaml",
-        ROOT / "configs/workloads/smoke.yaml",
+        ROOT / "configs/workloads/fixed_32_32.yaml",
         ROOT / "configs/profiles/vllm_cpu_amx_hbm_cache.yaml",
         provider="native",
         variant="bf16",
@@ -158,7 +189,7 @@ def test_flat_profile_can_select_discovered_ddr_tier(tmp_path: Path) -> None:
 
 def test_quantized_variants_are_llamacpp_only() -> None:
     model = load_model_manifest(ROOT / "configs/models/llama32_1b.yaml")
-    workload = load_workload(ROOT / "configs/workloads/offline.yaml")
+    workload = load_workload(ROOT / "configs/workloads/fixed_128_32.yaml")
     llama = load_execution_profile(ROOT / "configs/profiles/llamacpp_cpu.yaml")
     vllm = load_execution_profile(ROOT / "configs/profiles/vllm_gpu.yaml")
 
@@ -214,10 +245,26 @@ reqeust_rate: 2
 
 
 def test_serving_workload_requires_rate(tmp_path: Path) -> None:
-    original = (ROOT / "configs/workloads/serving.yaml").read_text(encoding="utf-8")
     workload = tmp_path / "serving.yaml"
     workload.write_text(
-        original.replace("request_rate: 4.0", "request_rate: null"), encoding="utf-8"
+        """
+schema_version: "2.0"
+workload_key: serving_fixture
+benchmark_type: serving
+seed: 42
+number_of_prompts: 2
+input_length: 32
+output_length: 16
+temperature: 0.0
+top_p: 1.0
+ignore_eos: true
+request_rate: null
+maximum_concurrency: 1
+repetitions: 1
+warmup_runs: 0
+telemetry_interval_ms: 1000
+""".lstrip(),
+        encoding="utf-8",
     )
 
     with pytest.raises(ConfigurationError, match="request_rate"):
@@ -237,13 +284,13 @@ def test_model_context_must_fit_workload(tmp_path: Path) -> None:
     original = (ROOT / "configs/models/llama32_1b.yaml").read_text(encoding="utf-8")
     model_path = tmp_path / "model.yaml"
     model_path.write_text(
-        original.replace("max_model_len: 8192", "max_model_len: 100"), encoding="utf-8"
+        original.replace("max_model_len: 131072", "max_model_len: 100"), encoding="utf-8"
     )
 
     with pytest.raises(ConfigurationError, match=r"input_length \+ output_length"):
         load_composed_experiment(
             model_path,
-            ROOT / "configs/workloads/serving.yaml",
+            ROOT / "configs/workloads/fixed_128_32.yaml",
             ROOT / "configs/profiles/vllm_gpu.yaml",
             provider="native",
             variant="f16",

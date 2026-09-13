@@ -5,7 +5,7 @@ tokenizer_id: meta-llama/Llama-3.1-8B-Instruct
 model_revision: null
 revision_policy: resolve-and-record
 model_parameter_scale: 8B
-max_model_len: 8192
+max_model_len: 131072
 variants:
   bf16:
     precision: bfloat16

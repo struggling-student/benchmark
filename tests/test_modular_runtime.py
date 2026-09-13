@@ -507,7 +507,7 @@ def test_model_preparation_records_revision_hashes_and_quantization(
 
     vllm = load_composed_experiment(
         ROOT / "configs/models/llama32_1b.yaml",
-        ROOT / "configs/workloads/smoke.yaml",
+        ROOT / "configs/workloads/fixed_32_32.yaml",
         ROOT / "configs/profiles/vllm_gpu.yaml",
         provider="native",
         variant="f16",

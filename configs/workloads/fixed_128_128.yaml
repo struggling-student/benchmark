@@ -1,10 +1,11 @@
+# Literature-matched token shape: FlexGen (2023), Table 17.
 schema_version: "2.0"
-workload_key: offline
+workload_key: fixed_128_128
 benchmark_type: offline
 seed: 42
 number_of_prompts: 128
-input_length: 256
-output_length: 64
+input_length: 128
+output_length: 128
 temperature: null
 top_p: null
 ignore_eos: null

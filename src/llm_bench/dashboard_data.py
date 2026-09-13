@@ -196,7 +196,7 @@ def _shared_identity(
             "seed": 42,
             "input_length": input_length,
             "output_length": output_length,
-            "max_model_len": 8192,
+            "max_model_len": 131072,
             "generation_config": "controlled",
             "temperature": 0.0,
             "top_p": 1.0,

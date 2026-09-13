@@ -1,0 +1,16 @@
+# Literature-matched token shape: THInfer (2026) and Kurt et al. (2026).
+schema_version: "2.0"
+workload_key: fixed_512_128
+benchmark_type: offline
+seed: 42
+number_of_prompts: 128
+input_length: 512
+output_length: 128
+temperature: null
+top_p: null
+ignore_eos: null
+request_rate: null
+maximum_concurrency: null
+repetitions: 3
+warmup_runs: 1
+telemetry_interval_ms: 1000

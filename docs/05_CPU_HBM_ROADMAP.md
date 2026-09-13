@@ -7,8 +7,8 @@ formal campaign.
 
 ## What is implemented now
 
-- The same two model manifests and smoke/offline/serving workloads compose with vLLM GPU,
-  llama.cpp CPU, and llama.cpp CUDA/hybrid profiles.
+- The same two model manifests and ten literature-matched fixed-length workloads compose with vLLM
+  GPU, llama.cpp CPU, and llama.cpp CUDA/hybrid profiles.
 - Shared API workloads use identical persisted prompts and generation controls.
 - CPU profiles record the requested ISA and exact required feature flags, threads, batch threads,
   affinity mask, NUMA policy, memory binding, batch and microbatch sizes, parallel slots, and GPU

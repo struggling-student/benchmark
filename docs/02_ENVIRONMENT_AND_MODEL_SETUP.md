@@ -156,14 +156,14 @@ establish that backend/version is the intended treatment.
 ```bash
 llm-bench validate \
   --model configs/models/llama32_1b.yaml \
-  --workload configs/workloads/smoke.yaml \
+  --workload configs/workloads/fixed_32_32.yaml \
   --profile configs/profiles/llamacpp_cpu.yaml \
   --provider native --variant f16 \
   --artifact-root "$MODEL_ARTIFACT_ROOT"
 
 llm-bench preflight \
   --model configs/models/llama32_1b.yaml \
-  --workload configs/workloads/smoke.yaml \
+  --workload configs/workloads/fixed_32_32.yaml \
   --profile configs/profiles/llamacpp_cpu.yaml \
   --provider native --variant f16 \
   --artifact-root "$MODEL_ARTIFACT_ROOT"

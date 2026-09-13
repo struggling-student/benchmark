@@ -28,7 +28,7 @@ Measures inference-system behavior — latency, throughput, utilization, power, 
 energy — not model quality. Not an official MLPerf implementation.
 
 **Models:** `meta-llama/Llama-3.1-8B-Instruct` · `meta-llama/Llama-3.2-1B-Instruct`
-**Workloads:** smoke · offline · serving
+**Workloads:** 10 literature-matched fixed-length token configurations
 
 <div align="center">
 
@@ -92,7 +92,7 @@ combination before any timed work:
 ```bash
 llm-bench preflight \
   --model configs/models/llama32_1b.yaml \
-  --workload configs/workloads/smoke.yaml \
+  --workload configs/workloads/fixed_32_32.yaml \
   --profile configs/profiles/vllm_gpu.yaml \
   --provider native --variant f16 \
   --artifact-root "$MODEL_ARTIFACT_ROOT"
@@ -106,7 +106,7 @@ Dry-run to inspect the exact command, then execute:
 bash scripts/run_benchmark.sh \
   --config configs/cluster/sapienza.env \
   --model configs/models/llama32_1b.yaml \
-  --workload configs/workloads/smoke.yaml \
+  --workload configs/workloads/fixed_32_32.yaml \
   --profile configs/profiles/llamacpp_cpu.yaml \
   --provider native --variant f16 \
   --dry-run
@@ -114,7 +114,7 @@ bash scripts/run_benchmark.sh \
 bash scripts/run_benchmark.sh \
   --config configs/cluster/sapienza.env \
   --model configs/models/llama32_1b.yaml \
-  --workload configs/workloads/smoke.yaml \
+  --workload configs/workloads/fixed_32_32.yaml \
   --profile configs/profiles/llamacpp_cpu.yaml \
   --provider native --variant f16
 ```
@@ -123,7 +123,7 @@ On Slurm, pass site resources to `sbatch`; the repository never guesses them:
 
 ```bash
 sbatch <SITE_RESOURCE_OPTIONS> \
-  --export=ALL,BENCH_CONFIG="$PWD/configs/cluster/sapienza.env",MODEL_CONFIG="$PWD/configs/models/llama32_1b.yaml",WORKLOAD_CONFIG="$PWD/configs/workloads/smoke.yaml",PROFILE_CONFIG="$PWD/configs/profiles/llamacpp_cuda.yaml",BENCH_PROVIDER=apptainer,MODEL_VARIANT=f16 \
+  --export=ALL,BENCH_CONFIG="$PWD/configs/cluster/sapienza.env",MODEL_CONFIG="$PWD/configs/models/llama32_1b.yaml",WORKLOAD_CONFIG="$PWD/configs/workloads/fixed_32_32.yaml",PROFILE_CONFIG="$PWD/configs/profiles/llamacpp_cuda.yaml",BENCH_PROVIDER=apptainer,MODEL_VARIANT=f16 \
   slurm/benchmark.sbatch
 ```
 
@@ -149,15 +149,14 @@ workload, CPU/GPU target, CPU ISA, or HBM mode is a config-only change:
 | Input | Purpose | Example |
 | --- | --- | --- |
 | `--model` | Canonical HF identity, revision policy, per-backend artifact variants | `configs/models/llama32_1b.yaml` |
-| `--workload` | Smoke / offline / serving request shapes and controls | `configs/workloads/smoke.yaml` |
+| `--workload` | Literature-matched prompt/generation shape | `configs/workloads/fixed_32_32.yaml` |
 | `--profile` | Device, backend, ISA, NUMA, and HBM placement | `configs/profiles/vllm_gpu.yaml` |
 | `--provider` | `native` · `docker` · `apptainer` | `--provider native` |
 
 `bf16` is available to vLLM, `f16` is available to both backends, and `q8_0`/`q4_k_m` are
-llama.cpp-only. Smoke and
-serving runs share one OpenAI-compatible streaming client; offline runs keep the native
-tools (`vllm bench throughput`, `llama-bench`), whose measurement scopes differ, so
-cross-backend offline results are descriptive, never controlled ratios.
+llama.cpp-only. Shipped literature workloads use the native offline tools
+(`vllm bench throughput`, `llama-bench`), whose measurement scopes differ, so cross-backend
+offline results are descriptive, never controlled ratios.
 
 CPU profiles can select `auto`, `avx2`, `avx512`, or `amx`. Explicit llama.cpp ISA targets use
 separate runtime variables (for example, `LLAMA_CPP_AMX_BIN_DIR`); vLLM CPU uses a dedicated
@@ -173,9 +172,10 @@ Start at [docs/](docs/README.md) — the documentation index.
 
 - [01 — Cluster prerequisites](docs/01_CLUSTER_PREREQUISITES.md)
 - [02 — Environment, providers, and model preparation](docs/02_ENVIRONMENT_AND_MODEL_SETUP.md)
-- [03 — Running the benchmark matrix](docs/03_RUNNING_THE_BENCHMARKS.md)
+- [03 — Running the benchmark matrix and literature-matched workloads](docs/03_RUNNING_THE_BENCHMARKS.md)
 - [04 — Metrics, results, and comparison validity](docs/04_METRICS_AND_RESULTS.md)
 - [05 — CPU-HBM roadmap](docs/05_CPU_HBM_ROADMAP.md)
+- [06 - Literature result baselines](docs/06_LITERATURE_RESULTS.md)
 
 ## Repository layout
 
