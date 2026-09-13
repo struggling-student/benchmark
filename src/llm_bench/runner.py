@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import signal
 import socket
@@ -34,6 +35,8 @@ from .workloads import (
     build_workload_manifest,
     write_workload_manifest,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _file_hash(path: Path) -> str:
@@ -84,10 +87,12 @@ def _new_run_directory(config: ExperimentConfig, results_root: Path) -> Path:
 def _stop_process(process: subprocess.Popen[Any] | None) -> None:
     if process is None or process.poll() is not None:
         return
+    logger.info("stopping backend process pid=%d", process.pid)
     try:
         os.killpg(process.pid, signal.SIGTERM)
         process.wait(timeout=10)
     except (ProcessLookupError, subprocess.TimeoutExpired):
+        logger.warning("pid=%d did not exit after SIGTERM; sending SIGKILL", process.pid)
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
@@ -155,6 +160,8 @@ class OfflineBenchmarkRunner:
         config = context.config
         command = context.backend.offline_command(config, output)
         wrapped = context.provider.wrap(command, config, context.provider_context)
+        logger.debug("backend command: %s", command)
+        logger.debug("wrapped (provider=%s) command: %s", config.provider, wrapped)
         output.parent.mkdir(parents=True, exist_ok=True)
         log_path = output.with_suffix(".log")
         stdout_target = output if config.backend == "llamacpp" else log_path
@@ -171,6 +178,13 @@ class OfflineBenchmarkRunner:
                 text=True,
                 start_new_session=True,
             )
+            logger.debug(
+                "spawned %s process pid=%d (measured=%s) -> %s",
+                config.backend,
+                process.pid,
+                measured,
+                output,
+            )
             context.summary["container_id"] = _container_id(
                 config.provider, context.provider_context.container_name
             )
@@ -185,9 +199,26 @@ class OfflineBenchmarkRunner:
                     collect_gpu=config.hardware_type in {"gpu", "hybrid"},
                 )
                 telemetry.start()
+                logger.debug(
+                    "telemetry started: interval_ms=%d path=%s",
+                    config.telemetry_interval_ms,
+                    telemetry.path,
+                )
             try:
-                return process.wait()
+                return_code = process.wait()
+                if return_code != 0:
+                    logger.error(
+                        "%s process pid=%d exited with code %d; diagnostics: %s",
+                        config.backend,
+                        process.pid,
+                        return_code,
+                        diagnostic_path,
+                    )
+                else:
+                    logger.debug("%s process pid=%d exited cleanly", config.backend, process.pid)
+                return return_code
             except KeyboardInterrupt:
+                logger.warning("interrupted; stopping backend process and cleaning up")
                 _stop_process(process)
                 _remove_container(
                     config.provider, context.provider_context.container_name or ""
@@ -196,6 +227,7 @@ class OfflineBenchmarkRunner:
             finally:
                 if telemetry:
                     telemetry.stop()
+                    logger.debug("telemetry stopped: %s", telemetry.path)
 
     def run(self, context: RunContext) -> tuple[list[Path], list[Path], list[str], str | None]:
         config = context.config
@@ -221,26 +253,38 @@ class OfflineBenchmarkRunner:
         else:
             context.summary["measurement_method"] = "vllm_bench_throughput"
             context.summary["measurement_scope"] = "vllm_bench_throughput_native"
+        logger.info(
+            "offline run: %d warm-up run(s), %d measured repetition(s)",
+            config.warmup_runs,
+            config.repetitions,
+        )
         warmup_root = context.run_directory / "warmup"
         for index in range(config.warmup_runs):
+            logger.info("warm-up %d/%d", index + 1, config.warmup_runs)
             output = warmup_root / f"raw_backend_output.warmup-{index + 1:03d}.json"
             if self._execute(context, output, measured=False) != 0:
+                logger.error("offline warm-up %d failed", index + 1)
                 return [], [], warnings, f"Offline warm-up {index + 1} failed"
 
         raw_paths: list[Path] = []
         telemetry_paths: list[Path] = []
         for index in range(config.repetitions):
+            logger.info("measured repetition %d/%d", index + 1, config.repetitions)
             suffix = "" if index == 0 else f".repetition-{index + 1:03d}"
             output = context.run_directory / f"raw_backend_output{suffix}.json"
             return_code = self._execute(context, output, measured=True)
             telemetry = output.with_name(output.stem + ".telemetry.csv")
             if return_code != 0 or not output.is_file() or output.stat().st_size == 0:
+                logger.error(
+                    "offline measured repetition %d failed with exit %d", index + 1, return_code
+                )
                 return raw_paths, telemetry_paths, warnings, (
                     f"Offline measured repetition {index + 1} failed with exit {return_code}"
                 )
             raw_paths.append(output)
             if telemetry.is_file() and telemetry.stat().st_size > 0:
                 telemetry_paths.append(telemetry)
+        logger.info("offline run complete: %d raw output(s) produced", len(raw_paths))
         return raw_paths, telemetry_paths, warnings, None
 
 
@@ -253,15 +297,23 @@ class ApiBenchmarkRunner:
         url = context.backend.health_url(host, port)
         started = time.monotonic()
         timeout = float(os.environ.get("LLM_BENCH_STARTUP_TIMEOUT_SECONDS", "600"))
+        logger.info("waiting for backend server at %s (timeout=%gs)", url, timeout)
+        attempts = 0
         while time.monotonic() - started < timeout:
             if process.poll() is not None:
+                logger.error("backend server pid=%d exited before becoming healthy", process.pid)
                 raise ConfigurationError("backend server exited before becoming healthy")
             try:
                 with urllib.request.urlopen(url, timeout=5) as response:  # noqa: S310
                     if 200 <= response.status < 300:
-                        return time.monotonic() - started
-            except (OSError, urllib.error.URLError):
+                        elapsed = time.monotonic() - started
+                        logger.info("backend server healthy after %.1fs", elapsed)
+                        return elapsed
+            except (OSError, urllib.error.URLError) as exc:
+                attempts += 1
+                logger.debug("health check attempt %d not ready yet: %s", attempts, exc)
                 time.sleep(1)
+        logger.error("backend server did not become healthy within %gs", timeout)
         raise ConfigurationError(f"backend server did not become healthy within {timeout:g}s")
 
     def _check_model_identity(self, config: ExperimentConfig) -> None:
@@ -292,6 +344,8 @@ class ApiBenchmarkRunner:
             context.provider_context,
             server=True,
         )
+        logger.debug("backend server command: %s", server_command)
+        logger.debug("wrapped (provider=%s) server command: %s", config.provider, wrapped)
         server_log = (context.run_directory / "server.log").open("w", encoding="utf-8")
         server: subprocess.Popen[Any] | None = None
         try:
@@ -302,23 +356,36 @@ class ApiBenchmarkRunner:
                 text=True,
                 start_new_session=True,
             )
+            logger.info("started %s server pid=%d", config.backend, server.pid)
             context.summary["model_load_time_seconds"] = self._wait_ready(context, server)
             context.summary["container_id"] = _container_id(
                 config.provider, context.provider_context.container_name
             )
             self._check_model_identity(config)
+            logger.debug("backend model identity verified: %s", config.model_id)
             workload = build_workload_manifest(config, local_files_only=True)
             write_workload_manifest(context.run_directory / "workload_manifest.json", workload)
             context.summary["workload_manifest_sha256"] = workload["sha256"]
             base_url = f"http://{host}:{port}"
             warmup_root = context.run_directory / "warmup"
+            logger.info(
+                "API run: %d warm-up run(s), %d measured repetition(s)",
+                config.warmup_runs,
+                config.repetitions,
+            )
             for index in range(config.warmup_runs):
+                logger.info("warm-up %d/%d", index + 1, config.warmup_runs)
                 raw = asyncio.run(run_api_benchmark(config, workload, base_url=base_url))
                 _json_write(
                     warmup_root / f"raw_harness_output.warmup-{index + 1:03d}.json",
                     raw,
                 )
                 if raw["failed_requests"]:
+                    logger.error(
+                        "API warm-up %d had %d failed request(s)",
+                        index + 1,
+                        raw["failed_requests"],
+                    )
                     return [], [], list(raw.get("warnings", [])), (
                         f"API warm-up {index + 1} had failed requests"
                     )
@@ -327,6 +394,7 @@ class ApiBenchmarkRunner:
             telemetry_paths: list[Path] = []
             warnings: list[str] = []
             for index in range(config.repetitions):
+                logger.info("measured repetition %d/%d", index + 1, config.repetitions)
                 suffix = "" if index == 0 else f".repetition-{index + 1:03d}"
                 output = context.run_directory / f"raw_harness_output{suffix}.json"
                 telemetry_path = context.run_directory / f"resource_telemetry{suffix}.csv"
@@ -349,11 +417,18 @@ class ApiBenchmarkRunner:
                 if telemetry_path.is_file() and telemetry_path.stat().st_size > 0:
                     telemetry_paths.append(telemetry_path)
                 if raw["failed_requests"]:
+                    logger.error(
+                        "API measured repetition %d had %d failed request(s)",
+                        index + 1,
+                        raw["failed_requests"],
+                    )
                     return raw_paths, telemetry_paths, warnings, (
                         f"API measured repetition {index + 1} had failed requests"
                     )
+            logger.info("API run complete: %d raw output(s) produced", len(raw_paths))
             return raw_paths, telemetry_paths, list(dict.fromkeys(warnings)), None
         except (ConfigurationError, OSError) as exc:
+            logger.error("API run failed: %s", exc)
             return [], [], [], str(exc)
         finally:
             _stop_process(server)
@@ -373,10 +448,17 @@ def validate_runtime(
     *,
     require_artifact: bool = True,
 ) -> dict[str, Any]:
+    logger.debug(
+        "validating runtime: backend=%s provider=%s require_artifact=%s",
+        config.backend,
+        config.provider,
+        require_artifact,
+    )
     _configure_cache_environment()
     backend = get_backend(config.backend)
     provider = get_provider(config.provider)
     hardware, hardware_checks = validate_hardware(config)
+    logger.debug("hardware checks: %s", hardware_checks)
     checks = [
         *hardware_checks,
         *backend.validate(config, require_artifact=require_artifact),
@@ -426,6 +508,7 @@ def validate_runtime(
         server_command = provider.wrap(
             backend.server_command(config), config, provider_context, server=True
         )
+    logger.debug("runtime validation checks: %s", checks)
     return {
         "status": "valid",
         "experiment_name": config.experiment_name,
@@ -462,6 +545,7 @@ def run_experiment(
         else _new_run_directory(config, root)
     )
     destination.mkdir(parents=True, exist_ok=False)
+    logger.info("run directory: %s", destination)
     configuration_hashes = {name: _file_hash(path) for name, path in source_paths.items()}
     resolved = config.to_dict()
     resolved["configuration_hashes"] = configuration_hashes
@@ -521,20 +605,30 @@ def run_experiment(
     runner = runner_type()
     summary["measurement_method"] = runner.measurement_method
     summary["measurement_scope"] = runner.measurement_scope
+    logger.info(
+        "dispatching %s benchmark via %r runner (measurement_method=%s)",
+        config.benchmark_type,
+        runner_type.__name__,
+        runner.measurement_method,
+    )
     interrupted = False
     try:
         raw_paths, telemetry_paths, warnings, error = runner.run(context)
     except KeyboardInterrupt:
+        logger.warning("benchmark interrupted; requesting backend cleanup")
         interrupted = True
         raw_paths = sorted(destination.glob("raw_*output*.json"))
         telemetry_paths = sorted(destination.glob("*telemetry*.csv"))
         warnings = ["Benchmark was interrupted; backend cleanup was requested."]
         error = "interrupted by signal"
     except (ConfigurationError, OSError) as exc:
+        logger.error("benchmark failed before completion: %s", exc)
         raw_paths = sorted(destination.glob("raw_*output*.json"))
         telemetry_paths = sorted(destination.glob("*telemetry*.csv"))
         warnings = []
         error = str(exc)
+    for warning in warnings:
+        logger.warning(warning)
     metadata["container_id"] = summary.get("container_id")
     metadata["measurement_method"] = summary.get("measurement_method")
     metadata["measurement_scope"] = summary.get("measurement_scope")
@@ -563,5 +657,7 @@ def run_experiment(
     if interrupted:
         raise KeyboardInterrupt
     if error:
+        logger.error("benchmark failed: %s; partial result: %s", error, destination)
         raise ConfigurationError(f"benchmark failed: {error}; partial result: {destination}")
+    logger.info("benchmark completed: %s", destination)
     return destination

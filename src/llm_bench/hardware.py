@@ -8,6 +8,7 @@ an allocation whose ISA or HBM mode does not match that treatment.
 from __future__ import annotations
 
 import json
+import logging
 import platform
 import re
 import subprocess
@@ -16,6 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from .config import ConfigurationError, ExperimentConfig
+
+logger = logging.getLogger(__name__)
 
 CPU_ISA_REQUIREMENTS: dict[str, frozenset[str]] = {
     "auto": frozenset(),
@@ -292,6 +295,7 @@ def validate_hardware(config: ExperimentConfig) -> tuple[dict[str, Any], list[st
     """Validate configured CPU/ISA/HBM expectations on the execution node."""
 
     report = inspect_hardware(config)
+    logger.debug("hardware inspection report: %s", report)
     report["memory_binding_requested"] = config.memory_binding
     report["memory_binding_resolved"] = None
     checks = [f"hardware target: {config.hardware_type}"]
@@ -302,6 +306,11 @@ def validate_hardware(config: ExperimentConfig) -> tuple[dict[str, Any], list[st
     missing = report["cpu_features_missing"]
     if report["cpu_features_required"]:
         if missing:
+            logger.error(
+                "CPU ISA target %r unavailable on this node; missing feature(s): %s",
+                target,
+                ", ".join(missing),
+            )
             raise ConfigurationError(
                 f"CPU ISA target {target!r} is unavailable; missing feature(s): "
                 + ", ".join(missing)
@@ -315,10 +324,18 @@ def validate_hardware(config: ExperimentConfig) -> tuple[dict[str, Any], list[st
     if requested_mode:
         detected_mode = report["memory_mode_detected"]
         if detected_mode is None:
+            logger.error(
+                "cannot verify requested HBM mode %r on this CPU/topology", requested_mode
+            )
             raise ConfigurationError(
                 f"cannot verify requested HBM mode {requested_mode!r} on this CPU/topology"
             )
         if detected_mode != requested_mode:
+            logger.error(
+                "HBM mode mismatch: profile requests %r, execution node reports %r",
+                requested_mode,
+                detected_mode,
+            )
             raise ConfigurationError(
                 f"HBM mode mismatch: profile requests {requested_mode!r}, "
                 f"execution node reports {detected_mode!r}"

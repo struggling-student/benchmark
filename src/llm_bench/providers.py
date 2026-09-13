@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -12,6 +13,8 @@ from typing import Protocol
 
 from .config import ConfigurationError, ExperimentConfig
 from .hardware import resolve_memory_binding
+
+logger = logging.getLogger(__name__)
 
 _ENVIRONMENT_ALLOWLIST = (
     "CUDA_VISIBLE_DEVICES",
@@ -99,10 +102,14 @@ def _memory_prefix(config: ExperimentConfig) -> list[str]:
     if numactl is None:
         raise ConfigurationError("memory_policy and memory_binding require the numactl executable")
     if policy == "interleave":
-        return [numactl, "--interleave", memory_binding or "all"]
+        prefix = [numactl, "--interleave", memory_binding or "all"]
+        logger.debug("NUMA memory policy: %s", prefix)
+        return prefix
     if not memory_binding:
         raise ConfigurationError("memory_policy 'bind' requires an explicit memory_binding")
-    return [numactl, "--membind", memory_binding]
+    prefix = [numactl, "--membind", memory_binding]
+    logger.debug("NUMA memory policy: %s", prefix)
+    return prefix
 
 
 def llama_cpp_runtime_variable(config: ExperimentConfig, kind: str) -> str:
@@ -229,6 +236,7 @@ class NativeProvider:
         resolved = self._resolve(command[0], config)
         if resolved is None:
             raise ConfigurationError(f"native executable unavailable: {command[0]}")
+        logger.debug("resolved native executable: %s -> %s", command[0], resolved)
         wrapped = [resolved, *command[1:]]
         if environment := _profile_environment(config):
             env = shutil.which("env")
@@ -267,6 +275,7 @@ class DockerProvider:
         *,
         server: bool = False,
     ) -> list[str]:
+        logger.debug("docker image: %s", self._image(config))
         command = _container_command(command, config)
         name = context.container_name or f"llm-bench-{os.getpid()}"
         wrapped = ["docker", "run", "--rm", "--name", name]
@@ -334,6 +343,8 @@ class ApptainerProvider:
         server: bool = False,
     ) -> list[str]:
         del server
+        image = self._image(config)
+        logger.debug("apptainer image: %s", image)
         command = _container_command(command, config)
         wrapped = [self._runtime(), "exec", "--cleanenv"]
         if config.hardware_type in {"gpu", "hybrid"}:
@@ -348,7 +359,7 @@ class ApptainerProvider:
         for mount in _mounts(context):
             suffix = ":ro" if mount.read_only else ":rw"
             wrapped.extend(("--bind", f"{mount.source}:{mount.destination}{suffix}"))
-        wrapped.extend((self._image(config), *command))
+        wrapped.extend((image, *command))
         return [*_memory_prefix(config), *wrapped]
 
 

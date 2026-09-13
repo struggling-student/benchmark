@@ -24,6 +24,7 @@ TIME_LIMIT="01:00:00"
 # The Xeon CPU Max 9480 HBM nodes have 112 cores and no SMT.
 CPUS_PER_TASK=112
 DEPENDENCY=""
+LOG_LEVEL=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --profile)   PROFILE="${2:?}";   shift 2 ;;
@@ -35,6 +36,7 @@ while [[ $# -gt 0 ]]; do
         --time)      TIME_LIMIT="${2:?}"; shift 2 ;;
         --cpus-per-task) CPUS_PER_TASK="${2:?}"; shift 2 ;;
         --dependency) DEPENDENCY="${2:?}"; shift 2 ;;
+        --log-level) LOG_LEVEL="${2:?}"; shift 2 ;;
         -h|--help)   sed -n '2,8p' "$0"; exit 0 ;;
         *) printf 'Unknown argument: %s\n' "$1" >&2; exit 2 ;;
     esac
@@ -73,6 +75,11 @@ CONTAINER_ENV="${CONTAINER_ENV},OMP_PROC_BIND=close,OMP_PLACES=cores"
 if grep -q '^backend:[[:space:]]*vllm' "${PROFILE}"; then
     CONTAINER_ENV="${CONTAINER_ENV},APPTAINERENV_VLLM_USE_V2_MODEL_RUNNER=0"
 fi
+
+# Diagnostic verbosity for this job. Overrides whatever LLM_BENCH_LOG_LEVEL is
+# set to in CONFIG for a single submission; leave --log-level off to use that
+# default (INFO unless CONFIG says otherwise).
+[[ -n "${LOG_LEVEL}" ]] && CONTAINER_ENV="${CONTAINER_ENV},LLM_BENCH_LOG_LEVEL=${LOG_LEVEL}"
 
 sbatch \
   --job-name="llmbench-${WORKLOAD_NAME}-${PROFILE_NAME}" \

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -16,6 +17,8 @@ from typing import Any
 
 from .config import ConfigurationError, ModelManifest
 from .providers import ProviderContext, get_provider
+
+logger = logging.getLogger(__name__)
 
 
 def sha256_file(path: str | Path) -> str:
@@ -38,6 +41,12 @@ def _snapshot(model: ModelManifest, cache_root: Path, *, local_files_only: bool)
         from huggingface_hub import snapshot_download
     except ImportError as exc:
         raise ConfigurationError("huggingface_hub is required to prepare models") from exc
+    logger.info(
+        "resolving Hugging Face snapshot: %s (revision=%s, local_files_only=%s)",
+        model.model_id,
+        model.model_revision or "latest",
+        local_files_only,
+    )
     try:
         location = snapshot_download(
             repo_id=model.model_id,
@@ -47,10 +56,13 @@ def _snapshot(model: ModelManifest, cache_root: Path, *, local_files_only: bool)
             token=os.environ.get("HF_TOKEN"),
         )
     except Exception as exc:
+        logger.error("model snapshot preparation failed: %s: %s", type(exc).__name__, exc)
         raise ConfigurationError(
             f"model snapshot preparation failed: {type(exc).__name__}"
         ) from exc
-    return Path(location).resolve()
+    resolved = Path(location).resolve()
+    logger.info("snapshot resolved: %s", resolved)
+    return resolved
 
 
 def _resolved_revision(snapshot: Path) -> str | None:
@@ -114,6 +126,7 @@ def _provider_command(
 
 
 def _run(command: Sequence[str], log: Path) -> None:
+    logger.info("running preparation command (log=%s): %s", log, list(command))
     with log.open("a", encoding="utf-8") as stream:
         stream.write("command=" + json.dumps(list(command)) + "\n")
         completed = subprocess.run(
@@ -124,9 +137,13 @@ def _run(command: Sequence[str], log: Path) -> None:
             text=True,
         )
     if completed.returncode != 0:
+        logger.error(
+            "preparation command failed with exit %d; see %s", completed.returncode, log
+        )
         raise ConfigurationError(
             f"model preparation command failed with exit {completed.returncode}; inspect {log}"
         )
+    logger.debug("preparation command exited 0")
 
 
 def _command_version(command: Sequence[str]) -> str | None:
@@ -211,6 +228,12 @@ def prepare_model(
 ) -> dict[str, Any]:
     """Cache a model snapshot and create any explicitly requested GGUF variants."""
 
+    logger.info(
+        "preparing model %s: variants=%s provider=%s",
+        model.model_key,
+        list(variants),
+        provider_name,
+    )
     requested = list(dict.fromkeys(variants))
     if provider_name not in {"native", "docker", "apptainer"}:
         raise ConfigurationError(f"unknown model preparation provider: {provider_name}")
@@ -256,6 +279,11 @@ def prepare_model(
         manifest_path.write_text(
             json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False) + "\n",
             encoding="utf-8",
+        )
+        logger.info(
+            "model preparation complete (snapshot only): %s -> %s",
+            model.model_key,
+            manifest_path,
         )
         return manifest
     f16_artifact = model.variants.get("f16")
@@ -313,8 +341,10 @@ def prepare_model(
             path=f16_path,
         )
         if reusable_f16:
+            logger.info("reusing existing f16 artifact: %s", f16_path)
             produced["f16"] = reusable_f16
         else:
+            logger.info("converting snapshot to f16 GGUF: %s", f16_path)
             _assert_no_unproven_artifact(f16_path, "f16")
             temporary_f16 = temporary_root / f16_name
             command = (
@@ -369,6 +399,7 @@ def prepare_model(
                 path=destination,
             )
             if reusable:
+                logger.info("reusing existing %s artifact: %s", name, destination)
                 produced[name] = reusable
                 continue
             _assert_no_unproven_artifact(destination, name)
@@ -377,6 +408,7 @@ def prepare_model(
                 quantization = variant.quantization
                 if not quantization:
                     raise ConfigurationError(f"variant {name} has no quantization method")
+                logger.info("quantizing %s -> %s (%s)", f16_path, destination, quantization)
                 command = (
                     _native_quantize_command(f16_path, temporary_output, quantization)
                     if provider_name == "native"
@@ -425,6 +457,7 @@ def prepare_model(
         json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False) + "\n",
         encoding="utf-8",
     )
+    logger.info("model preparation complete: %s -> %s", model.model_key, manifest_path)
     return manifest
 
 

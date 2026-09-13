@@ -98,6 +98,25 @@ Dry-run performs no inference. It resolves the artifact, checks the provider, ba
 HBM topology, exposes telemetry capabilities, determines mounts/ports/GPU flags, and prints the exact
 argv and hardware evidence as JSON. Run it inside the same Slurm allocation intended for inference.
 
+## Logging
+
+Every `llm-bench` subcommand logs through the standard library `logging` module under the
+`llm_bench` namespace, to stderr, so stdout stays reserved for the JSON/paths the CLI already
+prints. INFO covers lifecycle milestones (resolved experiment, run directory, warm-up/repetition
+progress, server health, completion); DEBUG adds the full resolved configuration, backend and
+provider-wrapped argv, NUMA/ISA detail, and per-attempt health-check noise; WARNING/ERROR surface
+the same conditions that already produce warnings or a non-zero exit.
+
+The level is decided once, globally, for a whole job:
+
+1. `llm-bench --log-level DEBUG run ...` — the flag must come **before** the subcommand.
+2. the `LLM_BENCH_LOG_LEVEL` environment variable (`DEBUG`, `INFO`, `WARNING`, `ERROR`, or
+   `CRITICAL`) — set it in a cluster config file (see
+   `configs/cluster/sapienza.example.env`) to fix the level for an entire allocation without
+   touching any script, or pass `--log-level` to `scripts/run_benchmark.sh` or
+   `scripts/submit_cresco8.sh` to override it for one job.
+3. `INFO` otherwise.
+
 ## Run locally or inside an allocation
 
 ```bash

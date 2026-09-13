@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -18,13 +19,24 @@ from .config import (
     load_composed_experiment,
     load_model_manifest,
 )
+from .logging_config import LOG_LEVELS, configure_logging
 from .preparation import prepare_model
 from .results import ResultError, compare_paths
 from .runner import run_experiment, validate_runtime
 
+logger = logging.getLogger(__name__)
+
 
 def _composed(args: argparse.Namespace):
-    return load_composed_experiment(
+    logger.debug(
+        "composing experiment: model=%s workload=%s profile=%s provider=%s variant=%s",
+        args.model,
+        args.workload,
+        args.profile,
+        args.provider,
+        args.variant,
+    )
+    config = load_composed_experiment(
         args.model,
         args.workload,
         args.profile,
@@ -32,6 +44,14 @@ def _composed(args: argparse.Namespace):
         variant=args.variant,
         artifact_root=args.artifact_root,
     )
+    logger.info(
+        "resolved experiment %s (backend=%s benchmark_type=%s)",
+        config.experiment_name,
+        config.backend,
+        config.benchmark_type,
+    )
+    logger.debug("resolved experiment configuration: %s", config.to_dict())
+    return config
 
 
 def _validate(args: argparse.Namespace) -> int:
@@ -42,7 +62,10 @@ def _validate(args: argparse.Namespace) -> int:
 
 def _preflight(args: argparse.Namespace) -> int:
     config = _composed(args)
+    logger.info("running preflight checks for %s", config.experiment_name)
     report = validate_runtime(config, require_artifact=not args.allow_missing_artifact)
+    logger.info("preflight status: %s", report["status"])
+    logger.debug("preflight report: %s", report)
     print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
     return 0
 
@@ -74,11 +97,13 @@ def _prepare_model(args: argparse.Namespace) -> int:
 def _run(args: argparse.Namespace) -> int:
     config = _composed(args)
     if args.dry_run:
+        logger.info("dry run: validating runtime only, no benchmark will execute")
         report = validate_runtime(config, require_artifact=not args.allow_missing_artifact)
         report["resolved_experiment"] = config.to_dict()
         print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
         return 0
     results_root = args.results_root or os.environ.get("RESULTS_ROOT") or Path.cwd() / "results"
+    logger.info("starting run for %s (results_root=%s)", config.experiment_name, results_root)
     destination = run_experiment(
         config,
         source_paths={
@@ -90,6 +115,7 @@ def _run(args: argparse.Namespace) -> int:
         run_directory=args.run_dir,
         repository=args.repository,
     )
+    logger.info("run finished: %s", destination)
     print(destination)
     return 0
 
@@ -147,6 +173,17 @@ def build_parser() -> argparse.ArgumentParser:
         prog="llm-bench",
         description="Composable vLLM and llama.cpp inference benchmarking",
     )
+    parser.add_argument(
+        "--log-level",
+        choices=LOG_LEVELS,
+        default=None,
+        help=(
+            "diagnostic verbosity for this invocation (overrides LLM_BENCH_LOG_LEVEL; "
+            "default INFO). Must come before the subcommand, e.g. "
+            "'llm-bench --log-level DEBUG run ...'. Logs go to stderr; stdout stays "
+            "reserved for command output."
+        ),
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     validate = subparsers.add_parser("validate", help="validate a composed experiment")
@@ -195,12 +232,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    level = configure_logging(args.log_level)
+    logger.debug("log level resolved to %s for command %r", level, args.command)
     try:
         handler: Any = args.handler
         return int(handler(args))
     except (ConfigurationError, ResultError, OSError, ValueError) as exc:
+        logger.error("%s command failed: %s", args.command, exc)
         parser.exit(2, f"error: {exc}\n")
     except KeyboardInterrupt:
+        logger.warning("interrupted by user")
         return 130
 
 
