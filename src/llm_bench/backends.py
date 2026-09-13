@@ -49,6 +49,13 @@ class VllmAdapter:
                     cache_dir=os.environ.get("MODEL_CACHE_DIR"),
                     local_files_only=True,
                     token=os.environ.get("HF_TOKEN"),
+                    # Meta's repositories ship a second copy of the weights as
+                    # a consolidated PyTorch checkpoint under original/, which
+                    # vLLM never reads: it downloads by allow_patterns. Since
+                    # huggingface_hub 1.31 one absent file makes the whole
+                    # cached snapshot "incomplete", so a cache that is entirely
+                    # sufficient for the run would otherwise fail validation.
+                    ignore_patterns=["original/*"],
                 )
             except Exception as exc:
                 raise ConfigurationError(
@@ -181,13 +188,21 @@ class LlamaCppAdapter:
 
     def offline_command(self, config: ExperimentConfig, output: Path) -> list[str]:
         del output  # llama-bench writes JSON to stdout; the runner captures it.
+        # llama-bench keeps its built-in pp512/tg128 tests unless -p and -n are
+        # cleared, so -pg alone measures two shapes nobody asked for. Its -r is
+        # repetitions per test, not a prompt count; the runner already repeats
+        # the whole invocation warmup_runs + repetitions times.
         return [
             "llama-bench",
             "-m",
             str(config.artifact_path),
             *self._placement(config, short=True),
+            "-p",
+            "0",
+            "-n",
+            "0",
             "-r",
-            str(config.number_of_prompts),
+            "1",
             "-o",
             "json",
             "-pg",
