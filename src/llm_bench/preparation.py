@@ -498,6 +498,29 @@ def prepare_model(
                 "arguments": arguments,
             }
 
+    # The manifest describes the artifact directory, not just this invocation.
+    # Preparing one variant used to rewrite the map with only that variant, which
+    # stripped the provenance of every artifact already sitting beside it and left
+    # them unusable: the backend adapter refuses a GGUF with no matching record,
+    # and re-preparing it refuses to overwrite an unproven file. Records for
+    # artifacts this run did not touch are carried forward, but only when they
+    # still verify against the same revision and hash.
+    retained: dict[str, dict[str, Any]] = {}
+    for name, variant in model.variants.items():
+        artifact = variant.artifacts.get("llamacpp")
+        if name in produced or artifact is None or artifact.filename is None:
+            continue
+        record = _reusable_record(
+            previous_manifest,
+            model=model,
+            revision=resolved_revision,
+            variant=name,
+            path=model_root / artifact.filename,
+        )
+        if record:
+            logger.info("retaining provenance for untouched %s artifact", name)
+            retained[name] = record
+
     manifest = {
         "schema_version": "1.0",
         "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
@@ -510,7 +533,7 @@ def prepare_model(
         "provider": provider_name,
         "provider_image": provider_image,
         "tool_provenance": tool_provenance,
-        "artifacts": produced,
+        "artifacts": {**retained, **produced},
     }
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False) + "\n",

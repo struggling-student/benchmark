@@ -12,7 +12,7 @@ from llm_bench import runner as runner_module
 from llm_bench.api_client import run_api_benchmark
 from llm_bench.backends import LlamaCppAdapter, VllmAdapter
 from llm_bench.config import config_from_mapping, load_composed_experiment, load_model_manifest
-from llm_bench.preparation import prepare_model
+from llm_bench.preparation import prepare_model, sha256_file
 from llm_bench.providers import ApptainerProvider, DockerProvider, NativeProvider, ProviderContext
 from llm_bench.results import ResultError, check_backend_treatment_compatibility, read_raw_metrics
 from llm_bench.runner import run_experiment, validate_runtime
@@ -644,6 +644,60 @@ def test_bf16_gguf_is_converted_from_the_snapshot_not_from_the_f16_base(
     assert record_bf16["precision"] == "bfloat16"
     assert record_bf16["quantization"] is None
     assert record_bf16["path"].endswith("llama32-1b-instruct-bf16.gguf")
+
+
+def test_preparing_one_variant_keeps_the_other_artifacts_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = load_model_manifest(ROOT / "configs/models/llama32_1b.yaml")
+    snapshot = tmp_path / "cache/models--test/snapshots" / ("f" * 40)
+    snapshot.mkdir(parents=True)
+    monkeypatch.setattr("llm_bench.preparation._snapshot", lambda *args, **kwargs: snapshot)
+    monkeypatch.setenv("LLAMA_CPP_CONVERT_SCRIPT", str(tmp_path / "convert_hf_to_gguf.py"))
+    (tmp_path / "convert_hf_to_gguf.py").write_text("", encoding="utf-8")
+
+    # An f16 GGUF already prepared from the same revision, with its manifest.
+    model_root = tmp_path / "artifacts" / "llama32_1b"
+    model_root.mkdir(parents=True)
+    existing = model_root / "llama32-1b-instruct-f16.gguf"
+    existing.write_bytes(b"EXISTING F16")
+    (model_root / "artifact-manifest.json").write_text(
+        json.dumps(
+            {
+                "model_id": model.model_id,
+                "resolved_revision": "f" * 40,
+                "artifacts": {
+                    "f16": {
+                        "path": str(existing),
+                        "format": "gguf",
+                        "precision": "float16",
+                        "quantization": None,
+                        "sha256": sha256_file(existing),
+                        "size_bytes": existing.stat().st_size,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def convert(command: list[str], log: Path) -> None:
+        Path(command[command.index("--outfile") + 1]).write_bytes(b"NEW BF16")
+
+    monkeypatch.setattr("llm_bench.preparation._run", convert)
+
+    manifest = prepare_model(
+        model,
+        provider_name="native",
+        variants=("bf16",),
+        artifact_root=tmp_path / "artifacts",
+        cache_root=tmp_path / "cache",
+    )
+
+    assert set(manifest["artifacts"]) == {"bf16", "f16"}
+    assert manifest["artifacts"]["f16"]["reused"] is True
+    assert manifest["artifacts"]["bf16"]["reused"] is False
+    assert existing.read_bytes() == b"EXISTING F16"
 
 
 def test_dry_run_contains_provider_wrapped_server_argv(
