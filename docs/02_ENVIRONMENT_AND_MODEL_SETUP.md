@@ -15,9 +15,8 @@ source "${VENV_PATH}/bin/activate"
 ```
 
 The base install includes the CLI, Hugging Face snapshot support, tokenizer support, the shared
-HTTP client, and portable process telemetry. Install `.[dashboard]` only where Streamlit is needed.
-Install vLLM separately using the version compatible with the selected Python, CUDA runtime, and
-driver.
+HTTP client, and portable process telemetry. Install vLLM separately using the version compatible
+with the selected Python, CUDA runtime, and driver.
 
 ## Configure an execution provider
 

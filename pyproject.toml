@@ -21,12 +21,6 @@ dev = [
   "pytest",
   "ruff",
 ]
-dashboard = [
-  "pandas>=2.0",
-  "plotly>=5.0",
-  "streamlit>=1.59",
-]
-
 [project.scripts]
 llm-bench = "llm_bench.cli:main"
 

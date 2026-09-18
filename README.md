@@ -11,7 +11,6 @@
   <a href="https://slurm.schedmd.com/"><img src="https://img.shields.io/badge/Slurm-ready-76B900?logo=slurm&logoColor=white" alt="Slurm"></a>
   <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white" alt="Docker"></a>
   <a href="https://apptainer.org/"><img src="https://img.shields.io/badge/Apptainer-ready-4E9A06?logo=apptainer&logoColor=white" alt="Apptainer"></a>
-  <a href="https://www.streamlit.io/"><img src="https://img.shields.io/badge/Dashboard-Streamlit-FF4B4B?logo=streamlit&logoColor=white" alt="Streamlit dashboard"></a>
 </p>
 
 <p align="center">
@@ -131,12 +130,10 @@ sbatch <SITE_RESOURCE_OPTIONS> \
 
 Each run writes a self-contained directory under `$RESULTS_ROOT` with
 `resolved_experiment.yaml`, `metadata.json`, `summary.json` (schema 2.0),
-`measurements.json`, raw backend output, telemetry CSV, and logs. Compare runs and
-explore the interactive dashboard:
+`measurements.json`, raw backend output, telemetry CSV, and logs. Compare two runs with:
 
 ```bash
 llm-bench compare RUN_A RUN_B --output-dir COMPARISON_DIRECTORY
-llm-bench dashboard --results-root "$RESULTS_ROOT"
 ```
 
 ---
@@ -180,7 +177,7 @@ Start at [docs/](docs/README.md) — the documentation index.
 ## Repository layout
 
 - `configs/` — cluster env example, model manifests, workloads, profiles
-- `src/llm_bench/` — configuration, providers, backends, runner, results, dashboard
+- `src/llm_bench/` — configuration, providers, backends, runner, and results
 - `scripts/` — environment setup, preflight, generic run entry point
 - `slurm/` — portable Slurm job entry point
 - `assets/` — banner and brand assets

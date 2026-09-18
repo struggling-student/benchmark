@@ -219,8 +219,7 @@ RUN_DIRECTORY/
 ```
 
 Repeated files have `.repetition-NNN` suffixes; warm-ups live under `warmup/`. Offline raw files are
-named `raw_backend_output*.json`. Old `raw_vllm_output*.json` files remain discoverable for legacy
-results.
+named `raw_backend_output*.json`.
 
 The initialized result is written before inference starts. Interruptions and benchmark failures
 request process-group/container cleanup and retain a failed partial summary instead of deleting
@@ -229,11 +228,11 @@ evidence.
 ## Comparison rules
 
 Use `llm-bench compare LEFT RIGHT --output-dir OUTPUT` for ordinary like-for-like comparisons.
-Use the dashboard's backend-treatment lens for vLLM versus llama.cpp. It requires distinct backends
-but matching source/tokenizer revisions, F16 precision, provider, hardware, shared-API method,
-workload hash, actual token counts, generation controls, warm-ups, and repetitions.
+The comparison checks source/tokenizer revisions, precision, provider, hardware, measurement method,
+workload hash, generation controls, warm-ups, and repetitions before emitting ratios.
 
-Native offline, CPU-versus-GPU, provider-mismatched, and quantized-versus-F16 pairs remain visible
-but descriptive or incompatible. A shared schema never implies a shared measurement boundary.
+Native offline comparisons across backends, CPU-versus-GPU, provider-mismatched, and
+quantized-versus-F16 pairs are descriptive or incompatible. A shared schema never implies a shared
+measurement boundary.
 
 Continue with [04 — Metrics and results](04_METRICS_AND_RESULTS.md).

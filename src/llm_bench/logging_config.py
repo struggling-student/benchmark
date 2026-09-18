@@ -109,9 +109,9 @@ def resolve_log_level(explicit: str | None = None) -> str:
 def configure_logging(explicit: str | None = None) -> str:
     """Configure the llm_bench logger namespace and return the level applied.
 
-    Idempotent: safe to call more than once per process (the dashboard and
-    tests both invoke the CLI entry point in-process), and never touches the
-    root logger so embedding applications keep their own configuration.
+    Idempotent: safe to call more than once per process (tests invoke the CLI
+    entry point in-process), and never touches the root logger so embedding
+    applications keep their own configuration.
     """
 
     level_name = resolve_log_level(explicit)

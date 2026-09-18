@@ -1,16 +1,10 @@
-"""Stable repetition-level artifacts and telemetry series for result presentation."""
+"""Stable repetition-level benchmark artifacts."""
 
 from __future__ import annotations
 
-import csv
 import json
-import math
-import re
-from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
 from pathlib import Path
-from statistics import fmean
 from typing import Any
 
 from .results import NUMERIC_METRICS, ResultError, read_raw_metrics, read_telemetry_metrics
@@ -36,22 +30,6 @@ def _portable_path(path: str | Path, run_directory: Path) -> str:
         return str(candidate.resolve().relative_to(run_directory.resolve()))
     except (OSError, ValueError):
         return candidate.name
-
-
-def resolve_recorded_path(path: str | Path | None, run_directory: str | Path) -> Path | None:
-    """Resolve a recorded path after a result directory may have been copied."""
-
-    if path is None or not str(path).strip():
-        return None
-    recorded = Path(path)
-    if recorded.is_file():
-        return recorded
-    root = Path(run_directory)
-    relative = root / recorded
-    if relative.is_file():
-        return relative
-    by_name = root / recorded.name
-    return by_name if by_name.is_file() else recorded
 
 
 def create_measurements(
@@ -183,175 +161,3 @@ def load_measurements(path: str | Path) -> dict[str, Any]:
     if not isinstance(data.get("records"), list):
         raise ResultError(f"measurements records must be a list: {source}")
     return data
-
-
-def measurements_for_run(
-    run_directory: str | Path, summary: Mapping[str, Any]
-) -> tuple[dict[str, Any], bool]:
-    """Load stable measurements or derive a read-only legacy view from preserved files."""
-
-    root = Path(run_directory)
-    artifact = root / "measurements.json"
-    if artifact.is_file():
-        return load_measurements(artifact), False
-
-    raw_paths = [
-        resolved
-        for item in summary.get("raw_output_files", [])
-        if (resolved := resolve_recorded_path(item, root)) is not None and resolved.is_file()
-    ]
-    telemetry_paths = [
-        resolved
-        for item in summary.get("telemetry_files", [])
-        if (resolved := resolve_recorded_path(item, root)) is not None and resolved.is_file()
-    ]
-    derived = create_measurements(
-        summary,
-        run_directory=root,
-        raw_output_paths=raw_paths,
-        telemetry_paths=telemetry_paths,
-        source="legacy-derived",
-    )
-    derived["warnings"] = [
-        "measurements.json was absent; repetition values were derived in memory from "
-        "preserved legacy files.",
-        *derived["warnings"],
-    ]
-    return derived, True
-
-
-def _normalized_key(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
-
-
-def _finite(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    text = str(value).strip()
-    match = re.match(r"^([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)", text)
-    if match is None:
-        return None
-    try:
-        number = float(match.group(1))
-    except ValueError:
-        return None
-    return number if math.isfinite(number) else None
-
-
-def _timestamp(value: str | None, fallback: float) -> float:
-    numeric = _finite(value)
-    if numeric is not None and numeric > 1_000_000:
-        return numeric
-    if value:
-        cleaned = value.strip().replace("Z", "+00:00")
-        try:
-            parsed = datetime.fromisoformat(cleaned)
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed.timestamp()
-        except ValueError:
-            pass
-    return fallback
-
-
-def _find_row_value(normalized: Mapping[str, Any], aliases: Sequence[str]) -> Any:
-    for alias in aliases:
-        if (key := _normalized_key(alias)) in normalized:
-            return normalized[key]
-    return None
-
-
-def read_telemetry_series(path: str | Path) -> list[dict[str, float | None]]:
-    """Return GPU or CPU allocation telemetry grouped by timestamp for plotting."""
-
-    source = Path(path)
-    try:
-        with source.open(encoding="utf-8", newline="") as stream:
-            rows = list(csv.DictReader(stream))
-    except OSError as exc:
-        raise ResultError(f"cannot read resource telemetry {source}: {exc}") from exc
-
-    samples: dict[float, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
-    for index, row in enumerate(rows):
-        normalized = {_normalized_key(key): value for key, value in row.items() if key}
-        timestamp = _timestamp(
-            _find_row_value(normalized, ("timestamp", "timestamp_iso", "time")),
-            float(index),
-        )
-        for name, aliases in (
-            (
-                "average_gpu_utilization_percent",
-                ("utilization.gpu [%]", "utilization_gpu", "gpu_utilization_percent"),
-            ),
-            ("total_gpu_memory_mib", ("memory.used [MiB]", "memory_used_mib", "memory_used")),
-            ("total_gpu_power_watts", ("power.draw [W]", "power_draw_watts", "power_draw")),
-            (
-                "average_cpu_utilization_percent",
-                (
-                    "cpu.utilization [%]",
-                    "cpu_utilization_percent",
-                    "cpu_usage_percent",
-                    "utilization_cpu",
-                ),
-            ),
-            (
-                "total_cpu_memory_mib",
-                (
-                    "rss_mib",
-                    "resident_memory_mib",
-                    "cpu_memory_used_mib",
-                    "host_memory_used_mib",
-                ),
-            ),
-            (
-                "total_cpu_power_watts",
-                (
-                    "package_power_watts",
-                    "cpu_package_power_watts",
-                    "total_cpu_power_watts",
-                    "package_power_w",
-                ),
-            ),
-            (
-                "memory_bandwidth_gbps",
-                (
-                    "memory_bandwidth_gbps",
-                    "memory_bandwidth_gb_s",
-                    "bandwidth_gbps",
-                    "total_memory_bandwidth_gbps",
-                ),
-            ),
-        ):
-            value = _finite(_find_row_value(normalized, aliases))
-            if value is not None:
-                samples[timestamp][name].append(value)
-
-    if not samples:
-        return []
-    first = min(samples)
-    series: list[dict[str, float | None]] = []
-    for timestamp in sorted(samples):
-        sample = samples[timestamp]
-        utilization = sample["average_gpu_utilization_percent"]
-        memory = sample["total_gpu_memory_mib"]
-        power = sample["total_gpu_power_watts"]
-        cpu_utilization = sample["average_cpu_utilization_percent"]
-        cpu_memory = sample["total_cpu_memory_mib"]
-        cpu_power = sample["total_cpu_power_watts"]
-        memory_bandwidth = sample["memory_bandwidth_gbps"]
-        record = {
-            "elapsed_seconds": timestamp - first,
-            "average_gpu_utilization_percent": fmean(utilization) if utilization else None,
-            "total_gpu_memory_mib": sum(memory) if memory else None,
-            "total_gpu_power_watts": sum(power) if power else None,
-        }
-        if cpu_utilization:
-            record["average_cpu_utilization_percent"] = fmean(cpu_utilization)
-        if cpu_memory:
-            record["total_cpu_memory_mib"] = sum(cpu_memory)
-        if cpu_power:
-            record["total_cpu_power_watts"] = sum(cpu_power)
-        if memory_bandwidth:
-            record["memory_bandwidth_gbps"] = sum(memory_bandwidth)
-        series.append(record)
-    return series

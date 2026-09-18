@@ -17,8 +17,6 @@ formal campaign.
 - Xeon Max preflight detects flat/cache mode from Linux NUMA topology and rejects a mismatch before
   inference. Flat-mode HBM/DDR bindings are checked against detected memory-only/CPU-bearing nodes.
 - CPU utilization/RSS and optional package power share schema 2.0 with GPU telemetry.
-- The dashboard understands CPU/GPU/hybrid runs and has a simulated DDR/HBM presentation contract
-  for fields that cannot yet be measured on the available cluster.
 
 Native `llama-bench` offline and the shared API harness answer different questions. Use the shared
 API method for a controlled vLLM-versus-llama.cpp backend treatment. Use llama-bench for detailed
@@ -72,15 +70,12 @@ Prefill and decode should be analyzed separately when supported. Prefill exposes
 parallelism, while autoregressive decode repeatedly reads weights and KV-cache state and can be more
 sensitive to achievable memory bandwidth. Sweep prompt length and batch/concurrency deliberately.
 
-## Dashboard and comparison extension
+## Comparison extension
 
-The current memory-study view treats DDR versus HBM as an explicit treatment and only shows ratios
-when model, CPU, backend, workload, precision, placement, and instrumentation match. Its demo data is
-simulated and cannot be cited as benchmark evidence.
-
-When real HBM results arrive, populate the existing optional memory fields and add only the
-platform-specific evidence needed to validate allocation. Schema compatibility alone does not make
-cross-machine or cross-instrumentation results comparable.
+When real HBM results arrive, populate the existing optional memory fields and add the
+platform-specific evidence needed to validate allocation. Treat DDR versus HBM as an explicit
+treatment only when model, CPU, backend, workload, precision, placement, and instrumentation match.
+Schema compatibility alone does not make cross-machine or cross-instrumentation results comparable.
 
 ## Optional MLCommons direction
 

@@ -14,7 +14,7 @@ from llm_bench.backends import LlamaCppAdapter, VllmAdapter
 from llm_bench.config import config_from_mapping, load_composed_experiment, load_model_manifest
 from llm_bench.preparation import prepare_model, sha256_file
 from llm_bench.providers import ApptainerProvider, DockerProvider, NativeProvider, ProviderContext
-from llm_bench.results import ResultError, check_backend_treatment_compatibility, read_raw_metrics
+from llm_bench.results import ResultError, read_raw_metrics
 from llm_bench.runner import run_experiment, validate_runtime
 from llm_bench.telemetry import (
     DockerTelemetryCollector,
@@ -465,57 +465,6 @@ def test_telemetry_collectors_keep_process_docker_gpu_and_rapl_scopes_separate(
     rapl = RaplTelemetryCollector()
     assert rapl.sample(1.0)["package_power_watts"] is None
     assert rapl.sample(2.0)["package_power_watts"] == 2.0
-
-
-def _backend_summary(backend: str) -> dict[str, Any]:
-    return {
-        "backend": backend,
-        "benchmark_type": "serving",
-        "model_id": "model",
-        "resolved_model_revision": "a" * 40,
-        "tokenizer_id": "model",
-        "resolved_tokenizer_revision": "a" * 40,
-        "model_precision": "float16",
-        "quantization": None,
-        "model_artifact_source_revision": "a" * 40,
-        "execution_provider": "native",
-        "hardware_type": "gpu",
-        "accelerator_name": "GPU",
-        "accelerator_count": 1,
-        "cpu_model": "CPU",
-        "socket_count": 1,
-        "numa_node_count": 1,
-        "measurement_method": "shared_openai_streaming",
-        "measurement_scope": "client_observed_end_to_end",
-        "workload_manifest_sha256": "b" * 64,
-        "input_length": 4,
-        "output_length": 2,
-        "actual_input_tokens": 8,
-        "actual_output_tokens": 4,
-        "generation_config": "controlled",
-        "temperature": 0.0,
-        "top_p": 1.0,
-        "ignore_eos": True,
-        "number_of_requests": 2,
-        "request_rate": 1.0,
-        "maximum_concurrency": 1,
-        "seed": 1,
-        "warmup_runs": 1,
-        "repetitions": 1,
-        "status": "completed",
-    }
-
-
-def test_backend_treatment_requires_shared_controlled_evidence() -> None:
-    left = _backend_summary("vllm")
-    right = _backend_summary("llamacpp")
-    assert check_backend_treatment_compatibility(left, right)["status"] == "compatible"
-
-    right["measurement_method"] = "llamacpp_bench"
-    result = check_backend_treatment_compatibility(left, right)
-    assert result["status"] == "incompatible"
-    assert any(item["field"] == "measurement_method" for item in result["evidence"])
-
 
 def test_model_preparation_records_revision_hashes_and_quantization(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import logging
 import os
-import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -132,37 +130,6 @@ def _compare(args: argparse.Namespace) -> int:
     return 0
 
 
-def _dashboard(args: argparse.Namespace) -> int:
-    if importlib.util.find_spec("streamlit") is None:
-        raise ResultError(
-            "dashboard dependencies are unavailable; install them with "
-            'pip install -e ".[dashboard]"'
-        )
-    command = [
-        sys.executable,
-        "-m",
-        "streamlit",
-        "run",
-        str(Path(__file__).with_name("dashboard.py")),
-        "--server.address",
-        args.host,
-        "--server.port",
-        str(args.port),
-        "--server.headless",
-        "true",
-        "--browser.gatherUsageStats",
-        "false",
-        "--client.toolbarMode",
-        "minimal",
-    ]
-    if args.results_root is not None:
-        command.extend(("--", "--results-root", str(args.results_root.expanduser().resolve())))
-    try:
-        return subprocess.call(command)
-    except KeyboardInterrupt:
-        return 130
-
-
 def _add_composed_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--model", type=Path, required=True, help="model manifest YAML")
     parser.add_argument("--workload", type=Path, required=True, help="workload YAML")
@@ -225,11 +192,6 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--output-dir", type=Path, required=True)
     compare.set_defaults(handler=_compare)
 
-    dashboard = subparsers.add_parser("dashboard", help="launch the read-only Streamlit dashboard")
-    dashboard.add_argument("--results-root", type=Path)
-    dashboard.add_argument("--host", default="127.0.0.1")
-    dashboard.add_argument("--port", type=int, default=8501)
-    dashboard.set_defaults(handler=_dashboard)
     return parser
 
 

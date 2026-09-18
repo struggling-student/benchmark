@@ -80,44 +80,14 @@ uses the arithmetic mean for ordinary performance/latency/utilization/power metr
 peak memory, and sums for token/request counts and energy. Missing or unreadable repetitions remain
 visible and make the run fail rather than being silently discarded.
 
-The catalog accepts schema 1.0, 1.1, and 2.0 without rewriting old result directories. Legacy
-`raw_vllm_output*.json` discovery remains supported.
-
-## Comparison lenses
+## Comparison validity
 
 Ordinary like-for-like comparison treats backend/version as controlled fields. It checks model and
 tokenizer identity/revision, precision, quantization, workload shape, request controls, software,
 hardware, provider, repetitions, and measurement scopes before emitting ratios.
 
-The dashboard's backend-treatment lens instead permits backend/version to be the intended
-difference. Ratios are emitted only for completed shared-API F16 runs when all of the following
-evidence matches:
-
-- canonical model and immutable source revision;
-- tokenizer and tokenizer revision;
-- provider type and hardware identity/topology;
-- workload-manifest hash and requested workload controls;
-- actual input/output token counts;
-- sampling, EOS, seed, rate, concurrency, warm-up, and repetition settings;
-- shared measurement method and client-observed scope.
-
-CPU-versus-GPU, provider mismatches, quantized-versus-F16, and native offline pairs are descriptive
-or incompatible. Quantized results remain scientifically useful, but they combine backend and
-numeric-representation changes and cannot isolate the backend effect.
-
-## Streamlit dashboard
-
-```bash
-pip install -e ".[dashboard]"
-llm-bench dashboard --results-root "$RESULTS_ROOT"
-```
-
-The read-only dashboard filters by backend, execution profile, provider, artifact variant, hardware,
-measurement method, model, workload, and status. Run detail places provenance and comparison-validity
-evidence next to performance. The demo source includes representative vLLM and llama.cpp CPU/GPU
-runs and is always labelled simulated.
-
-Prefer copying results to a workstation. If cluster policy permits a login-node dashboard, bind only
-to loopback and use SSH port forwarding; Streamlit never submits or controls jobs.
+CPU-versus-GPU, provider mismatches, quantized-versus-F16, and native offline pairs across backends
+are descriptive or incompatible. Quantized results remain scientifically useful, but they combine
+backend and numeric-representation changes and cannot isolate the backend effect.
 
 Continue with [05 — CPU-HBM roadmap](05_CPU_HBM_ROADMAP.md).

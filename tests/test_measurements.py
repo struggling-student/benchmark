@@ -9,8 +9,6 @@ from llm_bench.config import config_from_mapping
 from llm_bench.measurements import (
     create_measurements,
     load_measurements,
-    measurements_for_run,
-    read_telemetry_series,
     write_measurements,
 )
 from llm_bench.results import create_summary, normalize_summary, write_summary
@@ -125,65 +123,6 @@ def test_missing_repetition_and_unaligned_telemetry_are_explicit(tmp_path: Path)
     ]
     assert all(record["telemetry_file"] is None for record in measurements["records"])
     assert "could not be paired" in measurements["warnings"][0]
-
-
-def test_legacy_measurements_resolve_stale_absolute_paths(tmp_path: Path) -> None:
-    raw = tmp_path / "raw_vllm_output.json"
-    raw.write_text('{"requests_per_second": 7}', encoding="utf-8")
-    summary = _initial_summary(repetitions=1)
-    summary["raw_output_files"] = ["/old/cluster/path/raw_vllm_output.json"]
-
-    measurements, legacy = measurements_for_run(tmp_path, summary)
-
-    assert legacy is True
-    assert measurements["source"] == "legacy-derived"
-    assert measurements["records"][0]["metrics"][
-        "request_throughput_requests_per_second"
-    ] == pytest.approx(7.0)
-
-
-def test_telemetry_series_aggregates_multiple_gpus(tmp_path: Path) -> None:
-    telemetry = tmp_path / "telemetry.csv"
-    _telemetry(telemetry, power=100, memory=100)
-
-    series = read_telemetry_series(telemetry)
-
-    assert series == [
-        {
-            "elapsed_seconds": 0.0,
-            "average_gpu_utilization_percent": 60.0,
-            "total_gpu_memory_mib": 210.0,
-            "total_gpu_power_watts": 200.0,
-        },
-        {
-            "elapsed_seconds": 1.0,
-            "average_gpu_utilization_percent": 70.0,
-            "total_gpu_memory_mib": 250.0,
-            "total_gpu_power_watts": 200.0,
-        },
-    ]
-
-
-def test_telemetry_series_reads_cpu_memory_and_power_samples(tmp_path: Path) -> None:
-    telemetry = tmp_path / "cpu-telemetry.csv"
-    telemetry.write_text(
-        (
-            "timestamp,cpu_utilization_percent,rss_mib,package_power_watts,"
-            "memory_bandwidth_gbps\n"
-            "1700000000,80,12000,300,410\n"
-            "1700000001,90,12500,320,430\n"
-        ),
-        encoding="utf-8",
-    )
-
-    series = read_telemetry_series(telemetry)
-
-    assert series[0]["average_cpu_utilization_percent"] == pytest.approx(80)
-    assert series[0]["total_cpu_memory_mib"] == pytest.approx(12000)
-    assert series[0]["total_cpu_power_watts"] == pytest.approx(300)
-    assert series[0]["memory_bandwidth_gbps"] == pytest.approx(410)
-    assert series[1]["elapsed_seconds"] == pytest.approx(1)
-
 
 def test_measurement_writer_handles_generic_raw_output(tmp_path: Path) -> None:
     config = config_from_mapping(
