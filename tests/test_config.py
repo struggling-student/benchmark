@@ -38,7 +38,7 @@ def test_shipped_manifests_compose_complete_f16_matrix() -> None:
         for profile in profiles
     ]
 
-    assert (len(models), len(workloads), len(profiles)) == (2, 10, 12)
+    assert (len(models), len(workloads), len(profiles)) == (2, 10, 13)
     assert len(resolved) == len(models) * len(workloads) * len(profiles)
     assert {item.backend for item in resolved} == {"vllm", "llamacpp"}
     assert {item.benchmark_type for item in resolved} == {"offline"}
@@ -113,11 +113,12 @@ def test_vllm_cpu_amx_profile_resolves_bf16_runtime_controls() -> None:
     assert config.vllm_cpu_num_reserved_cpu == 1
 
 
-def test_vllm_cpu_flat_profile_binds_a_single_memory_tier() -> None:
+@pytest.mark.parametrize("isa", ["amx", "avx512"])
+def test_vllm_cpu_flat_profile_binds_a_single_memory_tier(isa: str) -> None:
     config = load_composed_experiment(
         ROOT / "configs/models/llama32_1b.yaml",
         ROOT / "configs/workloads/fixed_32_32.yaml",
-        ROOT / "configs/profiles/vllm_cpu_amx_hbm_flat.yaml",
+        ROOT / f"configs/profiles/vllm_cpu_{isa}_hbm_flat.yaml",
         provider="native",
         variant="bf16",
         artifact_root="/models",
@@ -125,6 +126,7 @@ def test_vllm_cpu_flat_profile_binds_a_single_memory_tier() -> None:
 
     assert config.backend == "vllm"
     assert config.hardware_type == "cpu"
+    assert config.cpu_isa_target == isa
     assert config.memory_mode == "flat"
     assert config.memory_type == "hbm2e"
     assert config.memory_binding == "hbm"

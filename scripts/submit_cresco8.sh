@@ -68,16 +68,33 @@ WORKLOAD_NAME="$(basename "${WORKLOAD}" .yaml)"
 #                     5 % on both prefill and decode. The provider forwards
 #                     these through its own allowlist, so they are exported for
 #                     the native provider; APPTAINERENV_* covers the container.
+#                     llama.cpp ONLY -- see the vLLM block below.
 CONTAINER_ENV="APPTAINERENV_HF_HUB_OFFLINE=1"
-CONTAINER_ENV="${CONTAINER_ENV},OMP_PROC_BIND=close,OMP_PLACES=cores"
 
-# The V2 CPU model runner in the v0.29.0 vLLM CPU image prepares prefill inputs
-# with a Triton kernel whose launcher is ABI-incompatible with the bundled Triton
-# CPU backend ("function takes exactly 18 arguments (21 given)"); both TP workers
-# die on the first request and the engine hangs. The V1 CPU model runner is the
-# native CPU path and has no such kernel. llama.cpp does not use Triton.
 if grep -q '^backend:[[:space:]]*vllm' "${PROFILE}"; then
+    # Do NOT set OMP_PROC_BIND/OMP_PLACES for vLLM. Either one makes the OpenMP
+    # runtime pin the master thread to the first place as soon as torch loads,
+    # which collapses the process CPU mask to a single CPU. vLLM plans its own
+    # per-rank core assignment from os.sched_getaffinity() *after* importing
+    # torch (vllm/utils/cpu_resource_utils.py:get_allowed_cpu_list), so it then
+    # sees one allowed CPU and hands rank 0 a single core and rank 1 none:
+    #
+    #   Selected CPU core number (1) should be greater than reserved (1)
+    #   local_rank=0, core ids=[0]
+    #   local_rank=1, core ids=[]
+    #
+    # Measured on cresco8-hbm14: with these vars the planner yields [1, 0] cores
+    # per rank, without them [56, 56]. Nothing errors -- the job just runs on one
+    # core. vLLM does its own binding, so it needs no OpenMP placement policy.
+    #
+    # The V2 CPU model runner in the v0.29.0 vLLM CPU image prepares prefill
+    # inputs with a Triton kernel whose launcher is ABI-incompatible with the
+    # bundled Triton CPU backend ("function takes exactly 18 arguments (21
+    # given)"); both TP workers die on the first request and the engine hangs.
+    # The V1 CPU model runner is the native CPU path and has no such kernel.
     CONTAINER_ENV="${CONTAINER_ENV},APPTAINERENV_VLLM_USE_V2_MODEL_RUNNER=0"
+else
+    CONTAINER_ENV="${CONTAINER_ENV},OMP_PROC_BIND=close,OMP_PLACES=cores"
 fi
 
 # Diagnostic verbosity for this job. Overrides whatever LLM_BENCH_LOG_LEVEL is
