@@ -12,8 +12,11 @@
 #       --target flat --output-dir ~/membench-results [--config CONFIG] [--threads 56]
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# _common.sh recomputes its own SCRIPT_DIR/REPO_ROOT globals when sourced,
+# clobbering any same-named variables in the caller -- so this repo's
+# membench directory is captured under a distinct name.
+MEMBENCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${MEMBENCH_DIR}/../.." && pwd)"
 # shellcheck disable=SC1091
 source "${REPO_ROOT}/scripts/_common.sh"
 
@@ -24,7 +27,7 @@ TARGET=""
 OUTPUT_DIR=""
 CONFIG=""
 THREADS=""
-BIN_DIR="${SCRIPT_DIR}/build"
+BIN_DIR="${MEMBENCH_DIR}/build"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in

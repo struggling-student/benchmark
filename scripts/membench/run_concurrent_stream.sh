@@ -12,9 +12,12 @@
 #       --target flat --output-dir ~/membench-results [--config CONFIG]
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# _common.sh recomputes its own SCRIPT_DIR/REPO_ROOT globals when sourced,
+# clobbering any same-named variables in the caller -- so this repo's
+# membench directory is captured under a distinct name.
+MEMBENCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-source "${SCRIPT_DIR}/../_common.sh"
+source "${MEMBENCH_DIR}/../_common.sh"
 
 SIZE=""
 A_CPU=""; A_MEM=""
@@ -52,10 +55,10 @@ COMMON_ARGS=(--size "${SIZE}" --target "${TARGET}" --output-dir "${OUTPUT_DIR}")
 printf 'Launching concurrent STREAM pair: A(cpu=%s,mem=%s) B(cpu=%s,mem=%s)\n' \
     "${A_CPU}" "${A_MEM}" "${B_CPU}" "${B_MEM}" >&2
 
-"${SCRIPT_DIR}/run_stream.sh" "${COMMON_ARGS[@]}" --cpu-bind "${A_CPU}" --mem-bind "${A_MEM}" \
+"${MEMBENCH_DIR}/run_stream.sh" "${COMMON_ARGS[@]}" --cpu-bind "${A_CPU}" --mem-bind "${A_MEM}" \
     >"${OUTPUT_DIR}/.concurrent_a.stdout" 2>&1 &
 PID_A=$!
-"${SCRIPT_DIR}/run_stream.sh" "${COMMON_ARGS[@]}" --cpu-bind "${B_CPU}" --mem-bind "${B_MEM}" \
+"${MEMBENCH_DIR}/run_stream.sh" "${COMMON_ARGS[@]}" --cpu-bind "${B_CPU}" --mem-bind "${B_MEM}" \
     >"${OUTPUT_DIR}/.concurrent_b.stdout" 2>&1 &
 PID_B=$!
 

@@ -11,9 +11,12 @@
 #       --config configs/cluster/cresco8.env
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# _common.sh recomputes its own SCRIPT_DIR/REPO_ROOT globals when sourced,
+# clobbering any same-named variables in the caller -- so this repo's
+# membench directory is captured under a distinct name.
+MEMBENCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-source "${SCRIPT_DIR}/../_common.sh"
+source "${MEMBENCH_DIR}/../_common.sh"
 
 TARGET=""
 OUTPUT_DIR=""
@@ -48,7 +51,7 @@ COMMON=(--target "${TARGET}" --output-dir "${OUTPUT_DIR}")
 
 printf '=== STREAM array-size sweep on DDR (node %s) ===\n' "${DDR_NODE}"
 for size in small below_cliff above_cliff; do
-    "${SCRIPT_DIR}/run_stream.sh" "${COMMON[@]}" \
+    "${MEMBENCH_DIR}/run_stream.sh" "${COMMON[@]}" \
         --size "${size}" --cpu-bind "${DDR_NODE}" --mem-bind "${DDR_NODE}"
 done
 
@@ -57,13 +60,13 @@ if [[ "${TARGET}" == "flat" ]]; then
     # above_cliff (~96 GiB) does not fit in one 64 GiB HBM node -- HBM-bound
     # numactl would fail with ENOMEM, so it is intentionally skipped here.
     for size in small below_cliff; do
-        "${SCRIPT_DIR}/run_stream.sh" "${COMMON[@]}" \
+        "${MEMBENCH_DIR}/run_stream.sh" "${COMMON[@]}" \
             --size "${size}" --cpu-bind "${DDR_NODE}" --mem-bind "${HBM_NODE}"
     done
 
     printf '=== Concurrent STREAM: socket %s DDR + socket %s HBM, simultaneously ===\n' \
         "${DDR_NODE}" "${DDR_NODE}"
-    "${SCRIPT_DIR}/run_concurrent_stream.sh" "${COMMON[@]}" --size small \
+    "${MEMBENCH_DIR}/run_concurrent_stream.sh" "${COMMON[@]}" --size small \
         --a-cpu-bind "${DDR_NODE}" --a-mem-bind "${DDR_NODE}" \
         --b-cpu-bind "${DDR_NODE}" --b-mem-bind "${HBM_NODE}"
 else
@@ -81,7 +84,7 @@ elif [[ -z "${MLC_BIN}" ]]; then
     printf 'first, or pass --skip-mlc to silence this warning.\n' >&2
 else
     printf '=== MLC bandwidth + latency matrices ===\n'
-    "${SCRIPT_DIR}/run_mlc.sh" "${COMMON[@]}" --bin "${MLC_BIN}"
+    "${MEMBENCH_DIR}/run_mlc.sh" "${COMMON[@]}" --bin "${MLC_BIN}"
 fi
 
 printf 'Done. Results in %s\n' "${OUTPUT_DIR}"
