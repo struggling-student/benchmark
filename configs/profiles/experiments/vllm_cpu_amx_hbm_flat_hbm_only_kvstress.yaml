@@ -16,7 +16,7 @@ port: 8000
 # the symbolic "hbm" binding (both HBM nodes pooled, ~128 GiB combined), each
 # rank's KV-cache shard could stay well under 64 GiB even with a large total
 # budget, so the single-socket 64 GiB wall this experiment targets would
-# never actually get hit. See docs/08_KV_CACHE_CAPACITY_EXPERIMENTS.md.
+# never actually get hit. See docs/07_KV_CACHE_CAPACITY_EXPERIMENTS.md.
 tensor_parallel_size: 1
 gpu_memory_utilization: null
 # Deliberately past the 64 GiB capacity of one HBM node, paired with an
@@ -33,7 +33,20 @@ numa_policy: null
 # hardware.py's resolve_memory_binding: "hbm" resolves to every memory-only
 # node on the machine ("2,3"), which would give ~128 GiB of combined
 # capacity and miss the single-socket wall this profile is built to hit.
+#
+# memory_binding alone does NOT work for vLLM: its CPUWorker derives its own
+# memory node from allowed_cpu_list[0]'s NUMA node (vllm/v1/worker/
+# cpu_worker.py), overriding any external numactl/--membind policy outright
+# -- always a DDR node here, since HBM nodes have no CPUs. Confirmed
+# empirically on cresco8-hbm14: with memory_binding alone, 85+ GiB landed on
+# node 0, not node 2. vllm_cpu_visible_memory_nodes below (-> the
+# CPU_VISIBLE_MEMORY_NODES env var, vLLM's own documented override, modeled
+# on CUDA_VISIBLE_DEVICES) is what actually redirects it: restricting the
+# visible memory nodes makes allowed_cpu_list[0]'s node fall outside that
+# set, which sends CPUWorker down its own existing fallback branch to the
+# node named here instead.
 memory_binding: "2"
+vllm_cpu_visible_memory_nodes: "2"
 memory_type: hbm2e
 memory_mode: flat
 gpu_layers: null

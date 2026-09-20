@@ -39,15 +39,67 @@ microbenchmark's own scope exactly (56 cores, one NUMA node pair) and keeps the 
 clean. Multi-rank placement is exactly the kind of thing a real placement PoC would
 need to solve; it's deliberately out of scope here.
 
-## What's unverified going in
+## KV-cache allocation is lazy (confirmed)
 
 Whether vLLM's CPU KV-cache allocation is eager (touches every page at model-load
 time) or lazy (physical pages faulted in only as blocks are actually used during
-serving) was not verifiable from this machine — vLLM's source isn't vendored here, and
-guessing risks misreading experiment B's result. The first real step on the cluster is
-empirical: start the B profile with its budget above 64 GiB and watch `numastat -p
-<pid>` (or RSS) at model-load time vs. during the first requests. Startup failure means
-eager allocation; failure only once serving pushes past 64 GiB means lazy.
+serving) wasn't verifiable from source on this machine, so it was checked empirically
+on `cresco8-hbm14`: the B profile's 80 GiB reservation against a tiny workload
+(`fixed_32_32`, ~8 MiB of real KV demand) completed a full run — warm-up plus 3
+repetitions — without any allocation failure. Eager allocation would have failed at
+model-load time regardless of workload size; it didn't, so allocation is lazy. This is
+exactly why B needs genuine concurrent demand (the sizing math below), not just a large
+configured budget, to actually reach the 64 GiB wall.
+
+## CPUWorker silently ignores memory_binding (found running B, fixed)
+
+The first real run of the B profile did not hit any capacity wall, but not because the
+budget was too small — the memory never landed on HBM at all. `numastat -p` on the
+actual worker process (not the top-level CLI process, but the `VLLM::Worker` child
+vLLM's engine spawns) showed ~85 GiB resident on **node 0 (DDR)** and ~200 MiB on node
+2 (the HBM node the profile requested).
+
+Traced into vLLM 0.29.0's own source (`vllm/v1/worker/cpu_worker.py`):
+
+```python
+allowed_cpu_list = get_allowed_cpu_list()
+cpu_core = allowed_cpu_list[0]
+...
+memory_node = cpu_core.numa_node   # the NUMA node of the first allowed CPU core
+torch.ops._C.init_cpu_memory_env([memory_node])
+```
+
+`CPUWorker.__init__` derives its own memory node from the NUMA node of the *first
+allowed CPU core*, and force-rebinds memory to it internally — completely independent
+of any external `numactl --membind` policy (`memory_binding` in a profile only ever
+controls the external `numactl`/`--cpuset-mems` wrapping; it never reaches this code
+path). In flat mode this can never pick an HBM node: nodes 2/3 have zero CPUs, so
+`cpu_core.numa_node` is structurally always a DDR node (0 or 1) whenever CPU affinity
+isn't restricted — which no profile in this project restricts (`cpu_mask: null`
+everywhere, including the original campaign's flat profiles). **This means the original
+`bf16-xbackend-flat` campaign's vLLM results plausibly never used HBM at all** — the
+`memory_binding: hbm` profile setting was silently a no-op for vLLM specifically, for
+its whole history. That reframes the "-9%" flat-vs-cache result from that campaign as
+possibly DDR-vs-DDR noise, not a real HBM-vs-cache-mode effect; it doesn't retract that
+result on its own, but it's no longer safe to cite as an HBM measurement.
+
+**Fix**: vLLM ships a purpose-built override for exactly this
+(`vllm/utils/cpu_resource_utils.py`, modeled on `CUDA_VISIBLE_DEVICES`):
+`CPU_VISIBLE_MEMORY_NODES`. Setting it restricts `get_visible_memory_node()`'s result,
+so `cpu_core.numa_node` (0) is no longer in the allowed set, and `CPUWorker.__init__`'s
+own existing fallback branch (`memory_node = allowed_memory_nodes[0]`) fires instead —
+now correctly landing on the named node. Confirmed empirically: with
+`CPU_VISIBLE_MEMORY_NODES=2` set, the same diagnostic workload showed the Worker
+process with ~4.6 GiB on node 2 and ~0 on node 0 (`numa_maps` entirely `bind:2`, zero
+`bind:0`) — the exact reverse of the unfixed run.
+
+This is now a first-class profile field, `vllm_cpu_visible_memory_nodes` (wired through
+`config.py`, `providers.py`'s `_profile_environment()`, and `metadata.py`/`results.py`
+for provenance, mirroring the existing `vllm_cpu_kvcache_space_gib` pattern), set
+alongside `memory_binding` on the B profile. Options considered and rejected:
+cgroup-level `cpuset.mems` (same effect, more operationally complex, needs cgroup
+delegation on a shared node) and patching `cpu_worker.py` directly (unnecessary — this
+is a supported, in-source mechanism, not a workaround).
 
 ## Files
 
@@ -55,7 +107,7 @@ eager allocation; failure only once serving pushes past 64 GiB means lazy.
 | --- | --- |
 | `configs/profiles/experiments/vllm_cpu_amx_hbm_cache_kvstress_control.yaml` | A1 — cache mode, 20 GiB KV budget (well under the cliff). |
 | `configs/profiles/experiments/vllm_cpu_amx_hbm_cache_kvstress.yaml` | A2 — cache mode, 70 GiB KV budget (past the cliff). |
-| `configs/profiles/experiments/vllm_cpu_amx_hbm_flat_hbm_only_kvstress.yaml` | B — flat mode, explicit single-node `memory_binding: "2"`, 80 GiB budget. |
+| `configs/profiles/experiments/vllm_cpu_amx_hbm_flat_hbm_only_kvstress.yaml` | B — flat mode, explicit single-node `memory_binding: "2"` **and** `vllm_cpu_visible_memory_nodes: "2"` (the latter is what actually works — see below), 80 GiB budget. |
 | `configs/workloads/experiments/kv_stress_30000_10000.yaml` | Same 30K-in/10K-out shape as the literature `fixed_30000_10000.yaml`, `number_of_prompts: 200` so vLLM's scheduler is forced to hold many requests concurrently. `repetitions: 1`, no warmup — a capacity/cliff demonstration doesn't need statistical precision, and 3x repeating an already-heavy 200-request batch would multiply an expensive run for no benefit. |
 
 These live under an `experiments/` subdirectory, not directly in `configs/workloads/`

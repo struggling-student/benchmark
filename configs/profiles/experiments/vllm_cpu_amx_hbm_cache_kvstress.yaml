@@ -12,14 +12,14 @@ cpu_features_required:
 host: 127.0.0.1
 port: 8000
 # Single rank/socket on purpose: matches the STREAM/MLC microbenchmark's own
-# scope (one socket, one NUMA node pair). See docs/08_KV_CACHE_CAPACITY_EXPERIMENTS.md.
+# scope (one socket, one NUMA node pair). See docs/07_KV_CACHE_CAPACITY_EXPERIMENTS.md.
 tensor_parallel_size: 1
 gpu_memory_utilization: null
 # Stress case for the A1/A2 comparison: deliberately past the 64 GiB/socket
 # transparent-HBM-cache budget. Cache mode has no explicit NUMA lever, so this
 # is the only way to push it past the cliff -- combine with a workload whose
 # real concurrent demand also exceeds 64 GiB (config alone doesn't guarantee
-# that; see docs/08_KV_CACHE_CAPACITY_EXPERIMENTS.md).
+# that; see docs/07_KV_CACHE_CAPACITY_EXPERIMENTS.md).
 vllm_cpu_kvcache_space_gib: 70
 vllm_cpu_omp_threads_bind: auto
 vllm_cpu_num_reserved_cpu: 1

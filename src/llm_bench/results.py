@@ -79,6 +79,7 @@ SUMMARY_FIELDS = (
     "vllm_cpu_kvcache_space_gib",
     "vllm_cpu_omp_threads_bind",
     "vllm_cpu_num_reserved_cpu",
+    "vllm_cpu_visible_memory_nodes",
     "memory_type",
     "memory_mode",
     "memory_mode_requested",
@@ -279,6 +280,7 @@ OPTIONAL_COMPATIBILITY_FIELDS = (
     "vllm_cpu_kvcache_space_gib",
     "vllm_cpu_omp_threads_bind",
     "vllm_cpu_num_reserved_cpu",
+    "vllm_cpu_visible_memory_nodes",
     "execution_provider",
     "measurement_method",
     "measurement_scope",
@@ -473,6 +475,7 @@ def create_summary(
         "vllm_cpu_kvcache_space_gib",
         "vllm_cpu_omp_threads_bind",
         "vllm_cpu_num_reserved_cpu",
+        "vllm_cpu_visible_memory_nodes",
         "memory_type",
         "memory_mode",
         "memory_mode_requested",
@@ -548,6 +551,7 @@ def create_summary(
             "vllm_cpu_kvcache_space_gib": config.vllm_cpu_kvcache_space_gib,
             "vllm_cpu_omp_threads_bind": config.vllm_cpu_omp_threads_bind,
             "vllm_cpu_num_reserved_cpu": config.vllm_cpu_num_reserved_cpu,
+            "vllm_cpu_visible_memory_nodes": config.vllm_cpu_visible_memory_nodes,
             "memory_type": config.memory_type,
             "memory_mode": config.memory_mode,
             "cpu_isa_target": config.cpu_isa_target,
@@ -1209,6 +1213,12 @@ _NULL_IS_MEANINGFUL = {
     "telemetry_scope",
     "energy_scope",
     "batch_size",
+    # Optional even on valid vLLM CPU profiles -- only the flat-mode profiles
+    # that need to steer CPUWorker off its default DDR node set it. A
+    # value-vs-null pair is a genuine mismatch (one run controlled NUMA
+    # placement, the other didn't), but null-null (neither needed it) is
+    # meaningful, not missing evidence.
+    "vllm_cpu_visible_memory_nodes",
 }
 
 

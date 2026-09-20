@@ -2,7 +2,7 @@
 # decode), but with number_of_prompts raised so vLLM's own continuous-batching
 # scheduler is forced to hold many of these concurrently -- driving real,
 # resident KV-cache usage past the 64 GiB/socket HBM budget rather than just
-# raising a config number. See docs/08_KV_CACHE_CAPACITY_EXPERIMENTS.md for
+# raising a config number. See docs/07_KV_CACHE_CAPACITY_EXPERIMENTS.md for
 # the sizing math and why this is a single-shot (repetitions: 1, no warmup)
 # run: at this length and concurrency, one repetition alone is already a
 # heavy batch -- 3x/4x repetitions would multiply an already-expensive run

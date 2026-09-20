@@ -91,6 +91,7 @@ class ExecutionProfile:
     vllm_cpu_kvcache_space_gib: int | None
     vllm_cpu_omp_threads_bind: str | None
     vllm_cpu_num_reserved_cpu: int | None
+    vllm_cpu_visible_memory_nodes: str | None
     thread_count: int | None
     thread_count_batch: int | None
     cpu_mask: str | None
@@ -151,6 +152,7 @@ class ExperimentConfig:
     vllm_cpu_kvcache_space_gib: int | None = None
     vllm_cpu_omp_threads_bind: str | None = None
     vllm_cpu_num_reserved_cpu: int | None = None
+    vllm_cpu_visible_memory_nodes: str | None = None
     host: str = "127.0.0.1"
     port: int = 8000
     thread_count: int | None = None
@@ -436,6 +438,7 @@ def load_execution_profile(path: str | Path) -> ExecutionProfile:
             "vllm_cpu_kvcache_space_gib",
             "vllm_cpu_omp_threads_bind",
             "vllm_cpu_num_reserved_cpu",
+            "vllm_cpu_visible_memory_nodes",
             "thread_count",
             "thread_count_batch",
             "cpu_mask",
@@ -500,6 +503,9 @@ def load_execution_profile(path: str | Path) -> ExecutionProfile:
             data.get("vllm_cpu_num_reserved_cpu"),
             0,
         ),
+        vllm_cpu_visible_memory_nodes=_optional_string(
+            "vllm_cpu_visible_memory_nodes", data.get("vllm_cpu_visible_memory_nodes")
+        ),
         thread_count=_optional_integer("thread_count", data.get("thread_count")),
         thread_count_batch=_optional_integer(
             "thread_count_batch", data.get("thread_count_batch")
@@ -545,6 +551,8 @@ def load_execution_profile(path: str | Path) -> ExecutionProfile:
         value is not None for value in vllm_cpu_controls
     ):
         raise ConfigurationError("vLLM CPU controls require a vLLM CPU profile")
+    if (backend, hardware) != ("vllm", "cpu") and profile.vllm_cpu_visible_memory_nodes is not None:
+        raise ConfigurationError("vllm_cpu_visible_memory_nodes requires a vLLM CPU profile")
     if backend == "vllm" and hardware == "cpu" and any(
         value is None for value in vllm_cpu_controls
     ):
@@ -698,6 +706,7 @@ def resolve_experiment(
         vllm_cpu_kvcache_space_gib=profile.vllm_cpu_kvcache_space_gib,
         vllm_cpu_omp_threads_bind=profile.vllm_cpu_omp_threads_bind,
         vllm_cpu_num_reserved_cpu=profile.vllm_cpu_num_reserved_cpu,
+        vllm_cpu_visible_memory_nodes=profile.vllm_cpu_visible_memory_nodes,
         host=profile.host,
         port=profile.port,
         thread_count=profile.thread_count,

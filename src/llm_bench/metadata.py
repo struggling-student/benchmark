@@ -413,6 +413,7 @@ def collect_metadata(
         "vllm_cpu_kvcache_space_gib": config.vllm_cpu_kvcache_space_gib,
         "vllm_cpu_omp_threads_bind": config.vllm_cpu_omp_threads_bind,
         "vllm_cpu_num_reserved_cpu": config.vllm_cpu_num_reserved_cpu,
+        "vllm_cpu_visible_memory_nodes": config.vllm_cpu_visible_memory_nodes,
         "memory_type": config.memory_type,
         "memory_mode": config.memory_mode,
         "memory_mode_requested": hardware["memory_mode_requested"],

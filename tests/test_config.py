@@ -132,6 +132,26 @@ def test_vllm_cpu_flat_profile_binds_a_single_memory_tier(isa: str) -> None:
     assert config.memory_binding == "hbm"
 
 
+def test_vllm_cpu_flat_hbm_only_profile_sets_visible_memory_nodes() -> None:
+    # vLLM's own CPUWorker picks its memory node from allowed_cpu_list[0]'s
+    # NUMA node, ignoring any external numactl/--membind policy -- always a
+    # DDR node in flat mode, since HBM nodes have no CPUs. This profile's
+    # explicit vllm_cpu_visible_memory_nodes is what actually steers vLLM
+    # onto the HBM node (confirmed empirically on cresco8-hbm14); a bare
+    # memory_binding: "2" alone is not enough.
+    config = load_composed_experiment(
+        ROOT / "configs/models/llama32_1b.yaml",
+        ROOT / "configs/workloads/experiments/kv_stress_30000_10000.yaml",
+        ROOT / "configs/profiles/experiments/vllm_cpu_amx_hbm_flat_hbm_only_kvstress.yaml",
+        provider="native",
+        variant="bf16",
+        artifact_root="/models",
+    )
+
+    assert config.memory_binding == "2"
+    assert config.vllm_cpu_visible_memory_nodes == "2"
+
+
 def test_vllm_gpu_profile_still_rejects_memory_binding(tmp_path: Path) -> None:
     original = (ROOT / "configs/profiles/vllm_gpu.yaml").read_text(encoding="utf-8")
     profile = tmp_path / "gpu.yaml"

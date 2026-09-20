@@ -12,7 +12,7 @@ cpu_features_required:
 host: 127.0.0.1
 port: 8000
 # Single rank/socket on purpose: matches the STREAM/MLC microbenchmark's own
-# scope (one socket, one NUMA node pair). See docs/08_KV_CACHE_CAPACITY_EXPERIMENTS.md.
+# scope (one socket, one NUMA node pair). See docs/07_KV_CACHE_CAPACITY_EXPERIMENTS.md.
 tensor_parallel_size: 1
 gpu_memory_utilization: null
 # Control for the A1/A2 comparison: comfortably under the 64 GiB/socket HBM

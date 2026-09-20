@@ -78,6 +78,16 @@ def _profile_environment(config: ExperimentConfig) -> list[tuple[str, str]]:
         "VLLM_CPU_KVCACHE_SPACE": config.vllm_cpu_kvcache_space_gib,
         "VLLM_CPU_OMP_THREADS_BIND": config.vllm_cpu_omp_threads_bind,
         "VLLM_CPU_NUM_OF_RESERVED_CPU": config.vllm_cpu_num_reserved_cpu,
+        # vLLM's CPUWorker picks its own memory node from the NUMA node of
+        # allowed_cpu_list[0] (see vllm/v1/worker/cpu_worker.py), ignoring any
+        # external numactl/--membind policy entirely. On a flat-mode host that
+        # is always a DDR node, since HBM nodes have no CPUs at all. This is
+        # vLLM's own documented override (vllm/utils/cpu_resource_utils.py,
+        # modeled on CUDA_VISIBLE_DEVICES): restricting the visible memory
+        # nodes here makes allowed_cpu_list[0]'s node fall outside that set,
+        # which sends CPUWorker down its own existing fallback branch to the
+        # node this variable names -- confirmed empirically on cresco8-hbm14.
+        "CPU_VISIBLE_MEMORY_NODES": config.vllm_cpu_visible_memory_nodes,
     }
     return [(name, str(value)) for name, value in values.items() if value is not None]
 
