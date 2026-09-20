@@ -50,7 +50,10 @@ for entry in "${SIZES[@]}"; do
     out="${OUT_DIR}/stream_${name}"
     printf 'Building %s (STREAM_ARRAY_SIZE=%s, NTIMES=%s) -> %s\n' \
         "${name}" "${array_size}" "${ntimes}" "${out}"
-    "${CC}" -O3 -march=native -fopenmp \
+    # -mcmodel=medium: the below_cliff/above_cliff arrays exceed 2 GiB, which
+    # overflows the default small code model's 32-bit .bss relocations
+    # ("relocation truncated to fit: R_X86_64_32S against `.bss'").
+    "${CC}" -O3 -march=native -mcmodel=medium -fopenmp \
         -DSTREAM_ARRAY_SIZE="${array_size}" -DNTIMES="${ntimes}" \
         -o "${out}" "${STREAM_SRC}"
 done
