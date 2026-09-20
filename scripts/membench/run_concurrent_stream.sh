@@ -1,14 +1,25 @@
 #!/usr/bin/env bash
 # Launch two STREAM instances simultaneously against independent (cpu, memory)
-# NUMA bindings and report each Triad rate plus their sum. This is the direct
-# test of "does concurrent access to two separate memory controllers beat
-# either alone" -- e.g. pass --a-cpu-bind 0 --a-mem-bind 0 (socket 0, its own
-# DDR) together with --b-cpu-bind 0 --b-mem-bind 2 (socket 0's cores again, but
-# its HBM node) to see whether the two tiers' bandwidth adds up when driven
-# from the same socket at the same time.
+# bindings and report each Triad rate plus their sum. This is the direct test
+# of "does concurrent access to two separate memory controllers beat either
+# alone."
+#
+# Use --a-cpu-list/--b-cpu-list (with --threads) rather than
+# --a-cpu-bind/--b-cpu-bind whenever both legs target the same NUMA node's
+# cores (e.g. socket 0's DDR vs socket 0's HBM): --cpu-bind pins to the whole
+# node, so two legs on the *same* node would fight over all of its cores.
+# --cpu-list splits it into disjoint physical core ranges instead, so neither
+# leg is CPU-starved by the other -- e.g.:
+#
+#   scripts/membench/run_concurrent_stream.sh --size small --threads 28 \
+#       --a-cpu-list 0-27 --a-mem-bind 0 --b-cpu-list 28-55 --b-mem-bind 2 \
+#       --target flat --output-dir ~/membench-results [--config CONFIG]
+#
+# --a-cpu-bind/--b-cpu-bind (whole-node binding) remains useful for legs on
+# genuinely different nodes, e.g. cross-socket comparisons:
 #
 #   scripts/membench/run_concurrent_stream.sh --size small \
-#       --a-cpu-bind 0 --a-mem-bind 0 --b-cpu-bind 0 --b-mem-bind 2 \
+#       --a-cpu-bind 0 --a-mem-bind 0 --b-cpu-bind 1 --b-mem-bind 3 \
 #       --target flat --output-dir ~/membench-results [--config CONFIG]
 set -euo pipefail
 
@@ -20,8 +31,8 @@ MEMBENCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${MEMBENCH_DIR}/../_common.sh"
 
 SIZE=""
-A_CPU=""; A_MEM=""
-B_CPU=""; B_MEM=""
+A_CPU_BIND=""; A_CPU_LIST=""; A_MEM=""
+B_CPU_BIND=""; B_CPU_LIST=""; B_MEM=""
 TARGET=""
 OUTPUT_DIR=""
 CONFIG=""
@@ -30,9 +41,11 @@ THREADS=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --size) SIZE="$2"; shift 2 ;;
-        --a-cpu-bind) A_CPU="$2"; shift 2 ;;
+        --a-cpu-bind) A_CPU_BIND="$2"; shift 2 ;;
+        --a-cpu-list) A_CPU_LIST="$2"; shift 2 ;;
         --a-mem-bind) A_MEM="$2"; shift 2 ;;
-        --b-cpu-bind) B_CPU="$2"; shift 2 ;;
+        --b-cpu-bind) B_CPU_BIND="$2"; shift 2 ;;
+        --b-cpu-list) B_CPU_LIST="$2"; shift 2 ;;
         --b-mem-bind) B_MEM="$2"; shift 2 ;;
         --target) TARGET="$2"; shift 2 ;;
         --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
@@ -42,9 +55,16 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-for v in SIZE A_CPU A_MEM B_CPU B_MEM TARGET OUTPUT_DIR; do
+for v in SIZE A_MEM B_MEM TARGET OUTPUT_DIR; do
     [[ -n "${!v}" ]] || die "missing required argument for ${v}"
 done
+[[ -n "${A_CPU_BIND}" || -n "${A_CPU_LIST}" ]] || die "one of --a-cpu-bind or --a-cpu-list is required"
+[[ -n "${B_CPU_BIND}" || -n "${B_CPU_LIST}" ]] || die "one of --b-cpu-bind or --b-cpu-list is required"
+
+A_CPU_ARGS=(--cpu-bind "${A_CPU_BIND}")
+[[ -n "${A_CPU_LIST}" ]] && A_CPU_ARGS=(--cpu-list "${A_CPU_LIST}")
+B_CPU_ARGS=(--cpu-bind "${B_CPU_BIND}")
+[[ -n "${B_CPU_LIST}" ]] && B_CPU_ARGS=(--cpu-list "${B_CPU_LIST}")
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -52,13 +72,13 @@ COMMON_ARGS=(--size "${SIZE}" --target "${TARGET}" --output-dir "${OUTPUT_DIR}")
 [[ -n "${CONFIG}" ]] && COMMON_ARGS+=(--config "${CONFIG}")
 [[ -n "${THREADS}" ]] && COMMON_ARGS+=(--threads "${THREADS}")
 
-printf 'Launching concurrent STREAM pair: A(cpu=%s,mem=%s) B(cpu=%s,mem=%s)\n' \
-    "${A_CPU}" "${A_MEM}" "${B_CPU}" "${B_MEM}" >&2
+printf 'Launching concurrent STREAM pair: A(%s %s,mem=%s) B(%s %s,mem=%s)\n' \
+    "${A_CPU_ARGS[@]}" "${A_MEM}" "${B_CPU_ARGS[@]}" "${B_MEM}" >&2
 
-"${MEMBENCH_DIR}/run_stream.sh" "${COMMON_ARGS[@]}" --cpu-bind "${A_CPU}" --mem-bind "${A_MEM}" \
+"${MEMBENCH_DIR}/run_stream.sh" "${COMMON_ARGS[@]}" "${A_CPU_ARGS[@]}" --mem-bind "${A_MEM}" \
     >"${OUTPUT_DIR}/.concurrent_a.stdout" 2>&1 &
 PID_A=$!
-"${MEMBENCH_DIR}/run_stream.sh" "${COMMON_ARGS[@]}" --cpu-bind "${B_CPU}" --mem-bind "${B_MEM}" \
+"${MEMBENCH_DIR}/run_stream.sh" "${COMMON_ARGS[@]}" "${B_CPU_ARGS[@]}" --mem-bind "${B_MEM}" \
     >"${OUTPUT_DIR}/.concurrent_b.stdout" 2>&1 &
 PID_B=$!
 

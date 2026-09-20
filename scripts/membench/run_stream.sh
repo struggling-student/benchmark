@@ -8,8 +8,18 @@
 # run_concurrent_stream.sh also uses this script with independent binds to
 # probe cross-socket/cross-tier behaviour deliberately.
 #
+# --cpu-list is an alternative to --cpu-bind: it pins to a specific physical
+# core range (numactl --physcpubind) instead of an entire NUMA node
+# (--cpunodebind), so two concurrent instances can be given disjoint cores on
+# the same socket -- e.g. one on cores 0-27 driving DDR, another on cores
+# 28-55 driving HBM, with neither starved of CPU by the other. --threads is
+# required alongside --cpu-list, since a subset of a node's cores must not be
+# oversubscribed by OpenMP defaulting to the whole node's core count.
+#
 #   scripts/membench/run_stream.sh --size below_cliff --cpu-bind 0 --mem-bind 2 \
 #       --target flat --output-dir ~/membench-results [--config CONFIG] [--threads 56]
+#   scripts/membench/run_stream.sh --size small --cpu-list 0-27 --mem-bind 2 \
+#       --threads 28 --target flat --output-dir ~/membench-results
 set -euo pipefail
 
 # _common.sh recomputes its own SCRIPT_DIR/REPO_ROOT globals when sourced,
@@ -22,6 +32,7 @@ source "${REPO_ROOT}/scripts/_common.sh"
 
 SIZE=""
 CPU_BIND=""
+CPU_LIST=""
 MEM_BIND=""
 TARGET=""
 OUTPUT_DIR=""
@@ -33,6 +44,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --size) SIZE="$2"; shift 2 ;;
         --cpu-bind) CPU_BIND="$2"; shift 2 ;;
+        --cpu-list) CPU_LIST="$2"; shift 2 ;;
         --mem-bind) MEM_BIND="$2"; shift 2 ;;
         --target) TARGET="$2"; shift 2 ;;
         --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
@@ -44,7 +56,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "${SIZE}" ]] || die "--size is required"
-[[ -n "${CPU_BIND}" ]] || die "--cpu-bind is required"
+if [[ -n "${CPU_BIND}" && -n "${CPU_LIST}" ]]; then
+    die "--cpu-bind and --cpu-list are mutually exclusive"
+fi
+[[ -n "${CPU_BIND}" || -n "${CPU_LIST}" ]] || die "one of --cpu-bind or --cpu-list is required"
+[[ -n "${CPU_LIST}" && -z "${THREADS}" ]] && die "--threads is required alongside --cpu-list"
 [[ -n "${MEM_BIND}" ]] || die "--mem-bind is required"
 [[ -n "${TARGET}" ]] || die "--target is required"
 [[ -n "${OUTPUT_DIR}" ]] || die "--output-dir is required"
@@ -67,15 +83,23 @@ export OMP_PROC_BIND=close
 export OMP_PLACES=cores
 [[ -n "${THREADS}" ]] && export OMP_NUM_THREADS="${THREADS}"
 
-printf 'STREAM %s: cpu-bind=%s mem-bind=%s target=%s\n' \
-    "${SIZE}" "${CPU_BIND}" "${MEM_BIND}" "${TARGET}" >&2
+if [[ -n "${CPU_LIST}" ]]; then
+    CPU_FLAG="--physcpubind=${CPU_LIST}"
+    CPU_RECORD="${CPU_LIST}"
+else
+    CPU_FLAG="--cpunodebind=${CPU_BIND}"
+    CPU_RECORD="${CPU_BIND}"
+fi
 
-OUTPUT="$(numactl --cpunodebind="${CPU_BIND}" --membind="${MEM_BIND}" "${BIN}")"
+printf 'STREAM %s: cpu=%s mem-bind=%s target=%s\n' \
+    "${SIZE}" "${CPU_RECORD}" "${MEM_BIND}" "${TARGET}" >&2
+
+OUTPUT="$(numactl "${CPU_FLAG}" --membind="${MEM_BIND}" "${BIN}")"
 printf '%s\n' "${OUTPUT}" >&2
 
 PARSE_ARGS=(
     --tool stream --target "${TARGET}" --output-dir "${OUTPUT_DIR}"
-    --cpu-bind "${CPU_BIND}" --mem-bind "${MEM_BIND}"
+    --cpu-bind "${CPU_RECORD}" --mem-bind "${MEM_BIND}"
     --param "array_size=${SIZE}"
 )
 [[ -n "${THREADS}" ]] && PARSE_ARGS+=(--threads "${THREADS}")

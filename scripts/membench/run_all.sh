@@ -23,6 +23,7 @@ OUTPUT_DIR=""
 CONFIG=""
 DDR_NODE=0
 HBM_NODE=2
+CORES_PER_NODE=56
 MLC_BIN="${MLC_BIN:-}"
 SKIP_MLC=0
 
@@ -33,6 +34,7 @@ while [[ $# -gt 0 ]]; do
         --config) CONFIG="$2"; shift 2 ;;
         --ddr-node) DDR_NODE="$2"; shift 2 ;;
         --hbm-node) HBM_NODE="$2"; shift 2 ;;
+        --cores-per-node) CORES_PER_NODE="$2"; shift 2 ;;
         --mlc-bin) MLC_BIN="$2"; shift 2 ;;
         --skip-mlc) SKIP_MLC=1; shift ;;
         *) die "Unknown argument: $1" ;;
@@ -64,11 +66,18 @@ if [[ "${TARGET}" == "flat" ]]; then
             --size "${size}" --cpu-bind "${DDR_NODE}" --mem-bind "${HBM_NODE}"
     done
 
-    printf '=== Concurrent STREAM: socket %s DDR + socket %s HBM, simultaneously ===\n' \
-        "${DDR_NODE}" "${DDR_NODE}"
-    "${MEMBENCH_DIR}/run_concurrent_stream.sh" "${COMMON[@]}" --size small \
-        --a-cpu-bind "${DDR_NODE}" --a-mem-bind "${DDR_NODE}" \
-        --b-cpu-bind "${DDR_NODE}" --b-mem-bind "${HBM_NODE}"
+    # Split socket ${DDR_NODE}'s cores into two disjoint halves so the DDR leg
+    # and the HBM leg never compete for the same CPUs -- only their memory
+    # controllers should contend, which is the thing actually being tested.
+    HALF=$((CORES_PER_NODE / 2))
+    BASE=$((DDR_NODE * CORES_PER_NODE))
+    CPU_LIST_A="${BASE}-$((BASE + HALF - 1))"
+    CPU_LIST_B="$((BASE + HALF))-$((BASE + CORES_PER_NODE - 1))"
+    printf '=== Concurrent STREAM: socket %s DDR (cores %s) + socket %s HBM (cores %s) ===\n' \
+        "${DDR_NODE}" "${CPU_LIST_A}" "${DDR_NODE}" "${CPU_LIST_B}"
+    "${MEMBENCH_DIR}/run_concurrent_stream.sh" "${COMMON[@]}" --size small --threads "${HALF}" \
+        --a-cpu-list "${CPU_LIST_A}" --a-mem-bind "${DDR_NODE}" \
+        --b-cpu-list "${CPU_LIST_B}" --b-mem-bind "${HBM_NODE}"
 else
     printf 'Cache mode exposes only DDR-backed NUMA nodes -- there is no second\n'
     printf 'tier to bind to, so the concurrent-tier test is skipped here. The\n'
