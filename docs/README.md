@@ -11,6 +11,7 @@ first time; each one builds on the previous.
 | [04 — Metrics, results, and comparison validity](04_METRICS_AND_RESULTS.md) | Interpret the shared-API and backend-native measurements, telemetry, provenance, and comparison validity. |
 | [05 — CPU-HBM implementation and roadmap](05_CPU_HBM_ROADMAP.md) | ISA/runtime selection, HBM mode verification, the CPU-DDR baseline, and the remaining CPU-HBM campaign work. |
 | [06 - Literature result baselines](06_LITERATURE_RESULTS.md) | Published measurements for every shipped literature workload, experimental conditions, comparability limits, and the table to fill with cluster results. |
+| [07 — Memory-bandwidth microbenchmark](07_MEMORY_BANDWIDTH_MICROBENCHMARK.md) | Standalone STREAM/MLC NUMA probe: HBM-vs-DDR bandwidth and whether flat mode's two tiers add bandwidth when driven concurrently. |
 
 ## Getting started
 

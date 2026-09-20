@@ -30,6 +30,12 @@ huggingface-cache/
 # Benchmark products (retain only the empty-directory marker)
 results/*
 !results/.gitkeep
+membench-results/
+
+# Downloaded/proprietary tools that cannot be committed (see
+# docs/07_MEMORY_BANDWIDTH_MICROBENCHMARK.md) -- `build/` above already covers
+# scripts/membench/build/.
+scripts/membench/vendor/
 
 # Local scratch: extracted paper text, PDFs, and other working material
 tmp/
