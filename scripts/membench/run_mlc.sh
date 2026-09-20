@@ -48,21 +48,26 @@ fi
 # -e`'d from a different checkout than the one running this script.
 export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 
-RUNNER=()
-if [[ "${EUID:-$(id -u)}" -ne 0 ]] && command -v sudo >/dev/null; then
-    RUNNER=(sudo -n)
-fi
-
 run_matrix() {
     local kind="$1" flag="$2" tool="$3"
     local output status=0
     printf 'MLC %s (%s)\n' "${kind}" "${flag}" >&2
-    if ! output="$("${RUNNER[@]}" "${BIN}" "${flag}" 2>&1)"; then
+    if ! output="$("${BIN}" "${flag}" 2>&1)"; then
         status=$?
+        # Retry once, non-interactively, with sudo -- only after a real
+        # failure, and only if it can succeed without prompting for a
+        # password (this must never hang a script waiting on stdin).
+        if [[ "${EUID:-$(id -u)}" -ne 0 ]] && command -v sudo >/dev/null \
+            && sudo -n true 2>/dev/null; then
+            printf 'Retrying %s with sudo -n\n' "${kind}" >&2
+            if output="$(sudo -n "${BIN}" "${flag}" 2>&1)"; then
+                status=0
+            fi
+        fi
     fi
     printf '%s\n' "${output}" >&2
     if [[ "${status}" -ne 0 ]]; then
-        printf 'WARNING: MLC %s exited %d (likely needs root); recording as a warning.\n' \
+        printf 'WARNING: MLC %s exited %d (may need root); recording as a warning.\n' \
             "${kind}" "${status}" >&2
     fi
     printf '%s' "${output}" | python3 -m llm_bench.membench \
