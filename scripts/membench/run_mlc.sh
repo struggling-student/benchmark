@@ -40,6 +40,11 @@ if [[ -n "${CONFIG}" ]]; then
     activate_bench_venv
 fi
 
+# Prefer this checkout's own `llm_bench` over whatever an editable install in
+# the shared venv happens to point at -- the venv may have been `pip install
+# -e`'d from a different checkout than the one running this script.
+export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
+
 RUNNER=()
 if [[ "${EUID:-$(id -u)}" -ne 0 ]] && command -v sudo >/dev/null; then
     RUNNER=(sudo -n)
