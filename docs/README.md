@@ -11,6 +11,7 @@ first time; each one builds on the previous.
 | [04 — Metrics, results, and comparison validity](04_METRICS_AND_RESULTS.md) | Interpret the shared-API and backend-native measurements, telemetry, provenance, and comparison validity. |
 | [05 — CPU-HBM implementation and roadmap](05_CPU_HBM_ROADMAP.md) | ISA/runtime selection, HBM mode verification, the CPU-DDR baseline, and the remaining CPU-HBM campaign work. |
 | [06 - Literature result baselines](06_LITERATURE_RESULTS.md) | Published measurements for every shipped literature workload, experimental conditions, comparability limits, and the table to fill with cluster results. |
+| [07 — KV-cache capacity-cliff experiments](07_KV_CACHE_CAPACITY_EXPERIMENTS.md) | Stress the 64 GiB/socket HBM budget with real vLLM serving (same model, no code change): does cache mode's cliff show up in real throughput, and does flat mode hit a hard capacity wall. |
 
 ## Getting started
 

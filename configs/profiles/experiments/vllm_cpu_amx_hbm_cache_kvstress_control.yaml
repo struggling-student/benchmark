@@ -1,0 +1,33 @@
+schema_version: "2.0"
+profile_name: vllm_cpu_amx_hbm_cache_kvstress_control
+backend: vllm
+hardware_type: cpu
+cpu_isa: amx
+cpu_features_required:
+  - avx512f
+  - avx512_vnni
+  - avx512_bf16
+  - amx_tile
+  - amx_bf16
+host: 127.0.0.1
+port: 8000
+# Single rank/socket on purpose: matches the STREAM/MLC microbenchmark's own
+# scope (one socket, one NUMA node pair). See docs/08_KV_CACHE_CAPACITY_EXPERIMENTS.md.
+tensor_parallel_size: 1
+gpu_memory_utilization: null
+# Control for the A1/A2 comparison: comfortably under the 64 GiB/socket HBM
+# budget, so this run should show no capacity-cliff effect.
+vllm_cpu_kvcache_space_gib: 20
+vllm_cpu_omp_threads_bind: auto
+vllm_cpu_num_reserved_cpu: 1
+thread_count: null
+thread_count_batch: null
+cpu_mask: null
+numa_policy: null
+memory_binding: null
+memory_type: hbm2e+ddr5
+memory_mode: cache
+gpu_layers: null
+batch_size: null
+ubatch_size: null
+parallel_slots: null

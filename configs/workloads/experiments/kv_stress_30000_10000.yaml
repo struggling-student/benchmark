@@ -1,0 +1,24 @@
+# Same shape as the literature fixed_30000_10000.yaml (30K-token prompt, 10K
+# decode), but with number_of_prompts raised so vLLM's own continuous-batching
+# scheduler is forced to hold many of these concurrently -- driving real,
+# resident KV-cache usage past the 64 GiB/socket HBM budget rather than just
+# raising a config number. See docs/08_KV_CACHE_CAPACITY_EXPERIMENTS.md for
+# the sizing math and why this is a single-shot (repetitions: 1, no warmup)
+# run: at this length and concurrency, one repetition alone is already a
+# heavy batch -- 3x/4x repetitions would multiply an already-expensive run
+# for a capacity/cliff demonstration that doesn't need statistical precision.
+schema_version: "2.0"
+workload_key: kv_stress_30000_10000
+benchmark_type: offline
+seed: 42
+number_of_prompts: 200
+input_length: 30000
+output_length: 10000
+temperature: null
+top_p: null
+ignore_eos: null
+request_rate: null
+maximum_concurrency: null
+repetitions: 1
+warmup_runs: 0
+telemetry_interval_ms: 1000
