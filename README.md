@@ -26,6 +26,11 @@
 Measures inference-system behavior — latency, throughput, utilization, power, and
 energy — not model quality. Not an official MLPerf implementation.
 
+Standalone STREAM/MLC microbenchmarks and CPU/DDR/HBM Roofline analysis live in
+[HW Bench](https://github.com/struggling-student/hw-bench). This repository only
+discovers CPU ISA and NUMA/HBM topology to validate **LLM inference** treatments;
+those runtime checks are not hardware benchmark campaigns.
+
 **Models:** `meta-llama/Llama-3.1-8B-Instruct` · `meta-llama/Llama-3.2-1B-Instruct`
 **Workloads:** 10 literature-matched fixed-length token configurations
 

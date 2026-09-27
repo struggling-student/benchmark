@@ -1,5 +1,11 @@
 # 05 — CPU-HBM implementation and campaign roadmap
 
+This guide concerns **LLM inference** on CPU/HBM profiles. Hardware-only STREAM,
+MLC, AVX-512/AMX microbenchmarks, and standalone Roofline figures are maintained
+in [HW Bench](https://github.com/struggling-student/hw-bench), not here. The CPU
+topology discovery in this repository remains necessary to reject mismatched
+inference allocations and validate requested memory placement.
+
 The repository has a llama.cpp CPU path, ISA-specific runtime selection, Xeon Max HBM mode
 verification, native/container providers, process-tree telemetry, RAPL package-power sampling where
 permitted, and CPU-aware result fields. The remaining thesis work is cluster validation and the
